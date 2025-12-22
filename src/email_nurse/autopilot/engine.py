@@ -16,6 +16,7 @@ from email_nurse.autopilot.models import (
     ProcessResult,
 )
 from email_nurse.mail.actions import (
+    VIRTUAL_MAILBOXES,
     delete_message,
     flag_message,
     forward_message,
@@ -153,18 +154,29 @@ class AutopilotEngine:
         for mailbox in self.config.mailboxes:
             for account in accounts:
                 try:
+                    # Fetch extra to account for filtering, but cap at 100 to avoid timeout
+                    # (AppleScript is slow - ~1s per message with content)
+                    fetch_limit = min(limit * 3, 100)
                     messages = get_messages(
                         mailbox=mailbox,
                         account=account,
-                        limit=limit * 2,  # Fetch extra to account for filtering
+                        limit=fetch_limit,
                         unread_only=False,  # Process ALL emails
                     )
+                    # Override mailbox with the one we queried (Gmail reports "All Mail"
+                    # for everything, but we need the actual mailbox for lookups)
+                    for msg in messages:
+                        if msg.mailbox in VIRTUAL_MAILBOXES or msg.mailbox.startswith("[Gmail]"):
+                            msg.mailbox = mailbox
                     all_emails.extend(messages)
                 except Exception as e:
                     console.print(
                         f"[yellow]Warning: Failed to fetch from {mailbox}"
                         f"{f' ({account})' if account else ''}:[/yellow] {e}"
                     )
+
+        # Sort by date (newest first) to prioritize recent emails
+        all_emails.sort(key=lambda e: e.date_received or datetime.min, reverse=True)
 
         # Filter out already processed and apply age filter
         unprocessed = []
@@ -228,7 +240,12 @@ class AutopilotEngine:
         match action_setting:
             case LowConfidenceAction.FLAG_FOR_REVIEW:
                 if not dry_run:
-                    flag_message(email.id, flagged=True)
+                    flag_message(
+                        email.id,
+                        flagged=True,
+                        source_mailbox=email.mailbox,
+                        source_account=email.account,
+                    )
                     self._mark_processed(email, decision)
                 return ProcessResult(
                     message_id=email.id,
@@ -327,6 +344,10 @@ class AutopilotEngine:
                 reason=decision.reasoning,
             )
 
+        # Determine target account for move operations
+        # If main_account is set, all moves go there; otherwise use source account
+        target_account = self.config.main_account or email.account
+
         try:
             match decision.action:
                 case EmailAction.MOVE:
@@ -334,20 +355,44 @@ class AutopilotEngine:
                         move_message(
                             email.id,
                             decision.target_folder,
-                            decision.target_account,
+                            target_account,
+                            source_mailbox=email.mailbox,
+                            source_account=email.account,
                         )
 
                 case EmailAction.DELETE:
-                    delete_message(email.id, permanent=False)
+                    # Delete always goes to the source account's trash
+                    delete_message(
+                        email.id,
+                        permanent=False,
+                        source_mailbox=email.mailbox,
+                        source_account=email.account,
+                    )
 
                 case EmailAction.ARCHIVE:
-                    move_message(email.id, "Archive")
+                    move_message(
+                        email.id,
+                        "Archive",
+                        target_account,
+                        source_mailbox=email.mailbox,
+                        source_account=email.account,
+                    )
 
                 case EmailAction.MARK_READ:
-                    mark_as_read(email.id, read=True)
+                    mark_as_read(
+                        email.id,
+                        read=True,
+                        source_mailbox=email.mailbox,
+                        source_account=email.account,
+                    )
 
                 case EmailAction.FLAG:
-                    flag_message(email.id, flagged=True)
+                    flag_message(
+                        email.id,
+                        flagged=True,
+                        source_mailbox=email.mailbox,
+                        source_account=email.account,
+                    )
 
                 case EmailAction.REPLY:
                     if decision.reply_content:
@@ -355,6 +400,8 @@ class AutopilotEngine:
                             email.id,
                             decision.reply_content,
                             send_immediately=True,
+                            source_mailbox=email.mailbox,
+                            source_account=email.account,
                         )
 
                 case EmailAction.FORWARD:
@@ -363,6 +410,8 @@ class AutopilotEngine:
                             email.id,
                             decision.forward_to,
                             send_immediately=True,
+                            source_mailbox=email.mailbox,
+                            source_account=email.account,
                         )
 
                 case EmailAction.IGNORE:

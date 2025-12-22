@@ -381,7 +381,7 @@ def run(
 @autopilot_app.command("run")
 def autopilot_run(
     once: Annotated[bool, typer.Option("--once", help="Run once then exit")] = True,
-    dry_run: Annotated[bool, typer.Option("--dry-run", "-n", help="Don't execute actions")] = True,
+    dry_run: Annotated[bool, typer.Option("--dry-run", "-n", help="Don't execute actions (test mode)")] = False,
     limit: Annotated[int | None, typer.Option("--limit", "-l", help="Max emails to process")] = None,
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Show detailed output")] = False,
     provider: Annotated[str | None, typer.Option("--provider", "-p", help="AI provider (default from settings)")] = None,

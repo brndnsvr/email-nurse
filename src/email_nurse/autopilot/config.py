@@ -28,6 +28,11 @@ class AutopilotConfig(BaseModel):
     max_age_days: int = Field(
         default=7, ge=1, description="Don't process emails older than this"
     )
+    main_account: str | None = Field(
+        default=None,
+        description="Central account for all move/archive operations (e.g., 'iCloud'). "
+        "When set, emails from other accounts will be moved to folders on this account.",
+    )
 
 
 def load_autopilot_config(path: Path) -> AutopilotConfig | None:
