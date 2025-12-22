@@ -76,6 +76,13 @@ class AutopilotDatabase:
                     details TEXT
                 );
 
+                -- Cache for mailbox lists (avoid slow AppleScript on every run)
+                CREATE TABLE IF NOT EXISTS mailbox_cache (
+                    account TEXT PRIMARY KEY,
+                    mailboxes TEXT NOT NULL,
+                    cached_at TEXT NOT NULL
+                );
+
                 -- Indexes for common queries
                 CREATE INDEX IF NOT EXISTS idx_processed_at
                     ON processed_emails(processed_at);
@@ -356,3 +363,54 @@ class AutopilotDatabase:
             stats["last_processed"] = row[0] if row else None
 
             return stats
+
+    # ─── Mailbox Cache ─────────────────────────────────────────────────────
+
+    def get_cached_mailboxes(self, account: str, max_age_minutes: int) -> list[str] | None:
+        """
+        Get cached mailboxes if fresh, else None.
+
+        Args:
+            account: Account name to get mailboxes for.
+            max_age_minutes: Maximum age of cache in minutes.
+
+        Returns:
+            List of mailbox names if cache is fresh, None otherwise.
+        """
+        with self._connection() as conn:
+            cursor = conn.execute(
+                """
+                SELECT mailboxes, cached_at FROM mailbox_cache
+                WHERE account = ?
+                """,
+                (account,),
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
+
+            # Check if cache is still fresh
+            cached_at = datetime.fromisoformat(row["cached_at"])
+            age_minutes = (datetime.now() - cached_at).total_seconds() / 60
+
+            if age_minutes > max_age_minutes:
+                return None  # Cache expired
+
+            return json.loads(row["mailboxes"])
+
+    def set_cached_mailboxes(self, account: str, mailboxes: list[str]) -> None:
+        """
+        Store mailboxes in cache with current timestamp.
+
+        Args:
+            account: Account name.
+            mailboxes: List of mailbox names.
+        """
+        with self._connection() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO mailbox_cache (account, mailboxes, cached_at)
+                VALUES (?, ?, ?)
+                """,
+                (account, json.dumps(mailboxes), datetime.now().isoformat()),
+            )

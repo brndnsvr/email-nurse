@@ -1,7 +1,8 @@
 """Mail.app message actions - move, delete, reply, forward, etc."""
 
-from email_nurse.mail.applescript import escape_applescript_string, run_applescript
+from difflib import SequenceMatcher
 
+from email_nurse.mail.applescript import escape_applescript_string, run_applescript
 
 # Virtual Gmail mailboxes that can't be referenced directly in AppleScript
 VIRTUAL_MAILBOXES = {
@@ -10,6 +11,85 @@ VIRTUAL_MAILBOXES = {
     "Important",
     "Starred",
 }
+
+
+def get_all_mailboxes(account: str) -> list[str]:
+    """
+    Get all mailbox names for an account.
+
+    Args:
+        account: The account name (e.g., "iCloud", "Google").
+
+    Returns:
+        List of mailbox names.
+    """
+    account_escaped = escape_applescript_string(account)
+    script = f'''
+    tell application "Mail"
+        set output to ""
+        set acct to account "{account_escaped}"
+        repeat with mbox in mailboxes of acct
+            if output is not "" then set output to output & "|||"
+            set output to output & name of mbox
+        end repeat
+        return output
+    end tell
+    '''
+    result = run_applescript(script)
+    return result.split("|||") if result else []
+
+
+def find_similar_mailbox(target: str, existing: list[str], threshold: float = 0.6) -> str | None:
+    """
+    Find a similar mailbox name using fuzzy matching.
+
+    Args:
+        target: The target mailbox name to match.
+        existing: List of existing mailbox names.
+        threshold: Minimum similarity ratio (0.0 to 1.0) to consider a match.
+
+    Returns:
+        The most similar existing mailbox name, or None if no good match.
+    """
+    target_lower = target.lower()
+    best_match = None
+    best_ratio = 0.0
+
+    for mailbox in existing:
+        # Check for exact match first (case-insensitive)
+        if mailbox.lower() == target_lower:
+            return mailbox
+
+        # Calculate similarity ratio
+        ratio = SequenceMatcher(None, target_lower, mailbox.lower()).ratio()
+        if ratio > best_ratio and ratio >= threshold:
+            best_ratio = ratio
+            best_match = mailbox
+
+    return best_match
+
+
+def create_mailbox(mailbox: str, account: str) -> bool:
+    """
+    Create a new mailbox in an account.
+
+    Args:
+        mailbox: Name of the mailbox to create.
+        account: Account to create the mailbox in.
+
+    Returns:
+        True if successful.
+    """
+    mailbox_escaped = escape_applescript_string(mailbox)
+    account_escaped = escape_applescript_string(account)
+    script = f'''
+    tell application "Mail"
+        set targetAcct to account "{account_escaped}"
+        make new mailbox with properties {{name:"{mailbox_escaped}"}} at targetAcct
+    end tell
+    '''
+    run_applescript(script)
+    return True
 
 
 def _get_message_ref(message_id: str, source_mailbox: str | None, source_account: str | None) -> str:
@@ -32,11 +112,13 @@ def move_message(
     source_account: str | None = None,
 ) -> bool:
     """
-    Move a message to a different mailbox, creating it if it doesn't exist.
+    Move a message to a different mailbox.
+
+    Note: The mailbox must exist. Use create_mailbox() to create new folders.
 
     Args:
         message_id: The Mail.app message ID.
-        target_mailbox: Name of the destination mailbox.
+        target_mailbox: Name of the destination mailbox (must exist).
         target_account: Account for the target mailbox (if different from source).
         source_mailbox: Original mailbox (for faster lookup).
         source_account: Original account (for faster lookup).
@@ -58,23 +140,8 @@ def move_message(
     if account_escaped:
         script = f'''
         tell application "Mail"
-            set targetAcct to account "{account_escaped}"
-
-            -- Check if mailbox exists, create if not
-            set mailboxExists to false
-            repeat with mbox in mailboxes of targetAcct
-                if name of mbox is "{mailbox_escaped}" then
-                    set mailboxExists to true
-                    exit repeat
-                end if
-            end repeat
-
-            if not mailboxExists then
-                make new mailbox with properties {{name:"{mailbox_escaped}"}} at targetAcct
-            end if
-
             set msg to {msg_ref}
-            move msg to mailbox "{mailbox_escaped}" of targetAcct
+            move msg to mailbox "{mailbox_escaped}" of account "{account_escaped}"
         end tell
         '''
     else:
@@ -118,11 +185,28 @@ def delete_message(
         end tell
         '''
     else:
+        # Find trash by common names since "trash mailbox of account" doesn't work
         script = f'''
         tell application "Mail"
             set msg to {msg_ref}
-            set acct to account of mailbox of msg
-            move msg to trash mailbox of acct
+            set msgAcct to account of mailbox of msg
+
+            -- Search for trash mailbox by common names
+            set trashNames to {{"Trash", "Deleted Messages", "[Gmail]/Trash", "Deleted Items"}}
+            set trashMbox to missing value
+
+            repeat with trashName in trashNames
+                try
+                    set trashMbox to mailbox trashName of msgAcct
+                    exit repeat
+                end try
+            end repeat
+
+            if trashMbox is missing value then
+                error "Could not find trash mailbox"
+            end if
+
+            move msg to trashMbox
         end tell
         '''
 

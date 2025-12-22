@@ -100,6 +100,9 @@ class Settings(BaseSettings):
     autopilot_rate_limit_delay: float = Field(
         default=1.0, ge=0.0, description="Delay between AI API calls (seconds)"
     )
+    mailbox_cache_ttl_minutes: int = Field(
+        default=60, ge=1, description="Minutes to cache mailbox list before refreshing"
+    )
 
     @property
     def rules_path(self) -> Path:

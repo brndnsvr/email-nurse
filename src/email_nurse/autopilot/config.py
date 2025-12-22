@@ -1,9 +1,25 @@
 """Autopilot configuration loader."""
 
 from pathlib import Path
+from typing import Literal
 
 import yaml
 from pydantic import BaseModel, Field
+
+
+class QuickRule(BaseModel):
+    """A deterministic rule that runs before AI classification."""
+
+    name: str = Field(description="Human-readable rule name")
+    match: dict[str, list[str]] = Field(
+        description="Match conditions: sender_contains, subject_contains, sender_domain"
+    )
+    action: Literal["delete", "move", "archive", "mark_read", "ignore"] = Field(
+        description="Action to take when rule matches"
+    )
+    folder: str | None = Field(
+        default=None, description="Target folder for 'move' action"
+    )
 
 
 class AutopilotConfig(BaseModel):
@@ -32,6 +48,10 @@ class AutopilotConfig(BaseModel):
         default=None,
         description="Central account for all move/archive operations (e.g., 'iCloud'). "
         "When set, emails from other accounts will be moved to folders on this account.",
+    )
+    quick_rules: list[QuickRule] = Field(
+        default_factory=list,
+        description="Deterministic rules that run before AI classification",
     )
 
 

@@ -78,10 +78,16 @@ class ProcessResult(BaseModel):
     message_id: str = Field(description="Mail.app message ID")
     success: bool = Field(default=True, description="Whether processing succeeded")
     action: str | None = Field(default=None, description="Action taken")
+    target_folder: str | None = Field(
+        default=None, description="Target folder for move/archive actions"
+    )
     skipped: bool = Field(default=False, description="Whether email was skipped")
     queued: bool = Field(default=False, description="Whether action was queued")
     reason: str | None = Field(default=None, description="Reason for skip/queue/failure")
     error: str | None = Field(default=None, description="Error message if failed")
+    rule_matched: str | None = Field(
+        default=None, description="Name of quick rule if matched (None = AI classified)"
+    )
 
 
 class AutopilotRunResult(BaseModel):
