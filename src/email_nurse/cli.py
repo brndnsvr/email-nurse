@@ -385,6 +385,7 @@ def autopilot_run(
     limit: Annotated[int | None, typer.Option("--limit", "-l", help="Max emails to process")] = None,
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Show detailed output")] = False,
     provider: Annotated[str | None, typer.Option("--provider", "-p", help="AI provider (default from settings)")] = None,
+    interactive: Annotated[bool, typer.Option("--interactive", "-i", help="Prompt for folder creation (otherwise queues for later)")] = False,
 ) -> None:
     """Run autopilot email processing."""
     from email_nurse.autopilot import AutopilotEngine, load_autopilot_config
@@ -445,10 +446,10 @@ def autopilot_run(
     console.print(f"  Provider: {provider}")
     console.print(f"  Model: {model_name}")
     console.print(f"  Dry run: {'Yes' if dry_run else 'No'}")
-    console.print(f"  Instructions: {config.instructions[:80]}...")
+    console.print(f"  Interactive: {'Yes' if interactive else 'No (queues missing folders)'}")
 
     async def run_autopilot():
-        result = await engine.run(dry_run=dry_run, limit=limit, verbose=verbose)
+        result = await engine.run(dry_run=dry_run, limit=limit, verbose=verbose, interactive=interactive)
         return result
 
     result = asyncio.run(run_autopilot())
@@ -722,6 +723,54 @@ def autopilot_status() -> None:
     console.print(f"  Confidence threshold: {settings.confidence_threshold:.0%}")
     console.print(f"  Outbound policy: {settings.outbound_policy}")
     console.print(f"  Outbound threshold: {settings.outbound_confidence_threshold:.0%}")
+
+
+@autopilot_app.command("reset")
+def autopilot_reset(
+    older_than: int = typer.Option(
+        None,
+        "--older-than",
+        "-o",
+        help="Only clear entries older than N days (default: all)",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        "-f",
+        help="Skip confirmation prompt",
+    ),
+) -> None:
+    """Reset processed email tracking to re-analyze messages."""
+    from email_nurse.storage.database import AutopilotDatabase
+
+    settings = get_settings()
+
+    if not settings.database_path.exists():
+        console.print("[yellow]No database found - nothing to reset.[/yellow]")
+        return
+
+    db = AutopilotDatabase(settings.database_path)
+    current_count = db.get_processed_count()
+
+    if current_count == 0:
+        console.print("[yellow]No processed emails to clear.[/yellow]")
+        return
+
+    # Describe what will happen
+    if older_than:
+        desc = f"entries older than {older_than} days"
+    else:
+        desc = f"all {current_count} entries"
+
+    if not force:
+        confirm = typer.confirm(f"Clear {desc} from processed tracking?")
+        if not confirm:
+            console.print("Cancelled.")
+            return
+
+    cleared = db.clear_processed(before_days=older_than)
+    console.print(f"[green]✓ Cleared {cleared} processed email records.[/green]")
+    console.print("Next autopilot run will re-analyze these messages.")
 
 
 if __name__ == "__main__":
