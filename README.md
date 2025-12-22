@@ -25,6 +25,18 @@ uv pip install -e ".[dev]"
 pip install -e ".[dev]"
 ```
 
+### direnv (optional)
+
+If you use [direnv](https://direnv.net/), you can auto-activate the virtual environment when entering the directory:
+
+```bash
+# Create .envrc file
+echo 'source .venv/bin/activate' > .envrc
+
+# Allow direnv for this directory
+direnv allow
+```
+
 ## Quick Start
 
 ```bash
