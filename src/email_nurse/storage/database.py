@@ -1,0 +1,358 @@
+"""SQLite database for autopilot state tracking."""
+
+import json
+import sqlite3
+from contextlib import contextmanager
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Generator
+
+
+class AutopilotDatabase:
+    """SQLite database for tracking processed emails and pending actions."""
+
+    def __init__(self, db_path: Path) -> None:
+        """
+        Initialize the database connection.
+
+        Args:
+            db_path: Path to the SQLite database file.
+        """
+        self.db_path = db_path
+        self._ensure_schema()
+
+    @contextmanager
+    def _connection(self) -> Generator[sqlite3.Connection, None, None]:
+        """Context manager for database connections."""
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        try:
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def _ensure_schema(self) -> None:
+        """Create database tables if they don't exist."""
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+
+        with self._connection() as conn:
+            conn.executescript("""
+                -- Track which emails have been processed
+                CREATE TABLE IF NOT EXISTS processed_emails (
+                    message_id TEXT PRIMARY KEY,
+                    mailbox TEXT NOT NULL,
+                    account TEXT NOT NULL,
+                    subject TEXT,
+                    sender TEXT,
+                    processed_at TEXT NOT NULL,
+                    action_taken TEXT NOT NULL,
+                    confidence REAL NOT NULL
+                );
+
+                -- Queue for actions awaiting user approval
+                CREATE TABLE IF NOT EXISTS pending_actions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    message_id TEXT NOT NULL,
+                    email_summary TEXT NOT NULL,
+                    proposed_action TEXT NOT NULL,
+                    confidence REAL NOT NULL,
+                    reasoning TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    resolved_at TEXT
+                );
+
+                -- Audit log for all actions taken
+                CREATE TABLE IF NOT EXISTS audit_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    message_id TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    timestamp TEXT NOT NULL,
+                    details TEXT
+                );
+
+                -- Indexes for common queries
+                CREATE INDEX IF NOT EXISTS idx_processed_at
+                    ON processed_emails(processed_at);
+                CREATE INDEX IF NOT EXISTS idx_pending_status
+                    ON pending_actions(status);
+                CREATE INDEX IF NOT EXISTS idx_audit_timestamp
+                    ON audit_log(timestamp);
+            """)
+
+    # ─── Processed Emails ─────────────────────────────────────────────────
+
+    def is_processed(self, message_id: str) -> bool:
+        """Check if an email has already been processed."""
+        with self._connection() as conn:
+            cursor = conn.execute(
+                "SELECT 1 FROM processed_emails WHERE message_id = ?",
+                (message_id,),
+            )
+            return cursor.fetchone() is not None
+
+    def get_processed_ids(self, limit: int = 10000) -> set[str]:
+        """Get set of processed message IDs for efficient filtering."""
+        with self._connection() as conn:
+            cursor = conn.execute(
+                "SELECT message_id FROM processed_emails ORDER BY processed_at DESC LIMIT ?",
+                (limit,),
+            )
+            return {row["message_id"] for row in cursor.fetchall()}
+
+    def mark_processed(
+        self,
+        message_id: str,
+        mailbox: str,
+        account: str,
+        subject: str,
+        sender: str,
+        action: dict[str, Any],
+        confidence: float,
+    ) -> None:
+        """Mark an email as processed."""
+        with self._connection() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO processed_emails
+                (message_id, mailbox, account, subject, sender, processed_at, action_taken, confidence)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    message_id,
+                    mailbox,
+                    account,
+                    subject,
+                    sender,
+                    datetime.now().isoformat(),
+                    json.dumps(action),
+                    confidence,
+                ),
+            )
+
+    def get_processed_count(self) -> int:
+        """Get count of processed emails."""
+        with self._connection() as conn:
+            cursor = conn.execute("SELECT COUNT(*) FROM processed_emails")
+            return cursor.fetchone()[0]
+
+    def clear_processed(self, before_days: int | None = None) -> int:
+        """Clear processed emails, optionally only those older than N days."""
+        with self._connection() as conn:
+            if before_days:
+                cursor = conn.execute(
+                    """
+                    DELETE FROM processed_emails
+                    WHERE datetime(processed_at) < datetime('now', ?)
+                    """,
+                    (f"-{before_days} days",),
+                )
+            else:
+                cursor = conn.execute("DELETE FROM processed_emails")
+            return cursor.rowcount
+
+    # ─── Pending Actions Queue ────────────────────────────────────────────
+
+    def add_pending_action(
+        self,
+        message_id: str,
+        email_summary: str,
+        proposed_action: dict[str, Any],
+        confidence: float,
+        reasoning: str,
+    ) -> int:
+        """Add an action to the pending queue. Returns the action ID."""
+        with self._connection() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO pending_actions
+                (message_id, email_summary, proposed_action, confidence, reasoning, created_at, status)
+                VALUES (?, ?, ?, ?, ?, ?, 'pending')
+                """,
+                (
+                    message_id,
+                    email_summary,
+                    json.dumps(proposed_action),
+                    confidence,
+                    reasoning,
+                    datetime.now().isoformat(),
+                ),
+            )
+            return cursor.lastrowid or 0
+
+    def get_pending_actions(
+        self,
+        status: str = "pending",
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """Get pending actions by status."""
+        with self._connection() as conn:
+            cursor = conn.execute(
+                """
+                SELECT id, message_id, email_summary, proposed_action,
+                       confidence, reasoning, created_at, status
+                FROM pending_actions
+                WHERE status = ?
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (status, limit),
+            )
+            results = []
+            for row in cursor.fetchall():
+                results.append({
+                    "id": row["id"],
+                    "message_id": row["message_id"],
+                    "email_summary": row["email_summary"],
+                    "proposed_action": json.loads(row["proposed_action"]),
+                    "confidence": row["confidence"],
+                    "reasoning": row["reasoning"],
+                    "created_at": row["created_at"],
+                    "status": row["status"],
+                })
+            return results
+
+    def get_pending_action(self, action_id: int) -> dict[str, Any] | None:
+        """Get a specific pending action by ID."""
+        with self._connection() as conn:
+            cursor = conn.execute(
+                """
+                SELECT id, message_id, email_summary, proposed_action,
+                       confidence, reasoning, created_at, status
+                FROM pending_actions WHERE id = ?
+                """,
+                (action_id,),
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
+            return {
+                "id": row["id"],
+                "message_id": row["message_id"],
+                "email_summary": row["email_summary"],
+                "proposed_action": json.loads(row["proposed_action"]),
+                "confidence": row["confidence"],
+                "reasoning": row["reasoning"],
+                "created_at": row["created_at"],
+                "status": row["status"],
+            }
+
+    def update_pending_status(self, action_id: int, status: str) -> bool:
+        """Update status of a pending action. Returns True if updated."""
+        with self._connection() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE pending_actions
+                SET status = ?, resolved_at = ?
+                WHERE id = ?
+                """,
+                (status, datetime.now().isoformat(), action_id),
+            )
+            return cursor.rowcount > 0
+
+    def get_pending_count(self) -> int:
+        """Get count of pending actions."""
+        with self._connection() as conn:
+            cursor = conn.execute(
+                "SELECT COUNT(*) FROM pending_actions WHERE status = 'pending'"
+            )
+            return cursor.fetchone()[0]
+
+    # ─── Audit Log ────────────────────────────────────────────────────────
+
+    def log_action(
+        self,
+        message_id: str,
+        action: str,
+        source: str,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        """Log an action to the audit trail."""
+        with self._connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO audit_log (message_id, action, source, timestamp, details)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    message_id,
+                    action,
+                    source,
+                    datetime.now().isoformat(),
+                    json.dumps(details) if details else None,
+                ),
+            )
+
+    def get_audit_log(
+        self,
+        limit: int = 100,
+        action_filter: str | None = None,
+        source_filter: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Get audit log entries."""
+        query = "SELECT * FROM audit_log WHERE 1=1"
+        params: list[Any] = []
+
+        if action_filter:
+            query += " AND action = ?"
+            params.append(action_filter)
+        if source_filter:
+            query += " AND source = ?"
+            params.append(source_filter)
+
+        query += " ORDER BY timestamp DESC LIMIT ?"
+        params.append(limit)
+
+        with self._connection() as conn:
+            cursor = conn.execute(query, params)
+            results = []
+            for row in cursor.fetchall():
+                results.append({
+                    "id": row["id"],
+                    "message_id": row["message_id"],
+                    "action": row["action"],
+                    "source": row["source"],
+                    "timestamp": row["timestamp"],
+                    "details": json.loads(row["details"]) if row["details"] else None,
+                })
+            return results
+
+    # ─── Statistics ───────────────────────────────────────────────────────
+
+    def get_stats(self) -> dict[str, Any]:
+        """Get database statistics."""
+        with self._connection() as conn:
+            stats = {}
+
+            # Processed count
+            cursor = conn.execute("SELECT COUNT(*) FROM processed_emails")
+            stats["processed_total"] = cursor.fetchone()[0]
+
+            # Pending count
+            cursor = conn.execute(
+                "SELECT COUNT(*) FROM pending_actions WHERE status = 'pending'"
+            )
+            stats["pending_count"] = cursor.fetchone()[0]
+
+            # Actions by type (last 7 days)
+            cursor = conn.execute("""
+                SELECT action, COUNT(*) as count
+                FROM audit_log
+                WHERE datetime(timestamp) > datetime('now', '-7 days')
+                GROUP BY action
+            """)
+            stats["actions_7d"] = {row["action"]: row["count"] for row in cursor.fetchall()}
+
+            # Last processed
+            cursor = conn.execute(
+                "SELECT MAX(processed_at) FROM processed_emails"
+            )
+            row = cursor.fetchone()
+            stats["last_processed"] = row[0] if row else None
+
+            return stats

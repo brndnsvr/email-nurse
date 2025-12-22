@@ -1,0 +1,71 @@
+# Autopilot Mode Configuration
+# Copy to ~/.config/email-nurse/autopilot.yaml and customize
+#
+# Autopilot uses AI to process ALL emails based on your natural language
+# instructions below. The AI interprets your preferences and decides
+# what action to take for each email.
+
+autopilot:
+  enabled: true
+
+  # Natural language instructions for the AI
+  # Be as specific as you want - the AI will interpret these
+  instructions: |
+    Handle my email according to these preferences:
+
+    ## Priority & Importance
+    - Emails from my team (@mycompany.com): leave in inbox, high priority
+    - Emails from my manager: leave in inbox, flag for attention
+    - Emails where I'm CC'd but not TO: lower priority, can be archived
+
+    ## Newsletters & Marketing
+    - Tech newsletters I've subscribed to: archive to "Reading List"
+    - Marketing/promotional I didn't ask for: delete
+    - Daily/weekly digest emails: archive, mark as read
+
+    ## Notifications
+    - GitHub notifications: move to "GitHub" folder, mark as read
+    - GitHub @mentions or review requests: leave in inbox, flag
+    - CI/CD failures: leave in inbox, flag
+    - Calendar invites: leave in inbox
+
+    ## Transactional
+    - Order confirmations: move to "Receipts" folder
+    - Shipping updates: move to "Receipts" folder
+    - Password resets: leave in inbox (never auto-process these)
+
+    ## Auto-Reply Guidelines
+    - Only suggest replies for work emails requiring acknowledgment
+    - Never auto-reply to personal emails
+    - Keep suggested replies brief and professional
+
+    ## Default Behavior
+    - When uncertain: leave in inbox (ignore action)
+    - Never delete anything that looks personal or unique
+    - Flag emails that seem important but don't match any rule
+    - Express confidence honestly - use lower scores when unsure
+
+  # Which mailboxes to process
+  mailboxes:
+    - INBOX
+
+  # Specific accounts to process (null = all accounts)
+  accounts: null
+
+  # Never auto-process emails matching these sender patterns
+  # (case-insensitive partial match)
+  exclude_senders:
+    - "security@"
+    - "no-reply@bank"
+    - "password"
+
+  # Never auto-process emails with these subject patterns
+  # (case-insensitive partial match)
+  exclude_subjects:
+    - "CONFIDENTIAL"
+    - "password reset"
+    - "two-factor"
+    - "verification code"
+
+  # Only process emails from the last N days
+  max_age_days: 7

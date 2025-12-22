@@ -1,0 +1,103 @@
+# Email Nurse Rules Configuration
+# Copy this file to ~/.config/email-nurse/rules.yaml and customize
+#
+# Each rule defines:
+#   - conditions: criteria for matching emails
+#   - action: what to do when matched
+#   - priority: lower number = evaluated first
+#   - stop_processing: if true, stop evaluating more rules on match
+
+rules:
+  # Example: Archive newsletters
+  - name: "Archive Newsletters"
+    description: "Move newsletter emails to Archive"
+    enabled: true
+    priority: 100
+    conditions:
+      - type: subject_contains
+        value: "newsletter"
+      - type: body_contains
+        value: "unsubscribe"
+    match_all: false  # OR logic - match if ANY condition is true
+    action:
+      action: move
+      target_folder: "Archive"
+    stop_processing: true
+
+  # Example: Flag emails from specific domain
+  - name: "Flag Important Domain"
+    description: "Flag emails from important clients"
+    enabled: true
+    priority: 50
+    conditions:
+      - type: sender_domain
+        value: "important-client.com"
+    action:
+      action: flag
+    stop_processing: false
+
+  # Example: Delete known spam patterns
+  - name: "Delete Spam Patterns"
+    description: "Delete emails matching known spam patterns"
+    enabled: false  # Disabled by default for safety
+    priority: 10
+    conditions:
+      - type: subject_regex
+        value: "(?i)(urgent|winner|lottery|crypto|bitcoin)"
+      - type: sender_regex
+        value: "@(spam|bulk|marketing)\\."
+        negate: false
+    match_all: false
+    action:
+      action: delete
+    stop_processing: true
+
+  # Example: Auto-organize by sender domain
+  - name: "GitHub Notifications"
+    description: "Move GitHub notifications to GitHub folder"
+    enabled: true
+    priority: 80
+    conditions:
+      - type: sender_domain
+        value: "github.com"
+    action:
+      action: move
+      target_folder: "GitHub"
+    stop_processing: true
+
+  # Example: Use AI for complex classification
+  - name: "AI Triage Remaining"
+    description: "Let AI classify unmatched emails"
+    enabled: false
+    priority: 999  # Run last
+    conditions: []  # Matches everything
+    use_ai: true
+    ai_context: |
+      Classify this email into one of these categories:
+      - Marketing: promotional content, move to "Marketing" folder
+      - Finance: invoices, receipts, bills, move to "Finance" folder
+      - Personal: personal correspondence, ignore (leave in inbox)
+      - Social: social media notifications, mark as read
+
+      Be conservative - when in doubt, use 'ignore' action.
+    action:
+      action: ignore  # Default if AI fails
+    stop_processing: true
+
+# Condition types reference:
+# - sender_contains, sender_equals, sender_domain, sender_regex
+# - subject_contains, subject_equals, subject_regex, subject_starts_with
+# - body_contains, body_regex
+# - recipient_contains, recipient_equals
+# - mailbox_equals, account_equals
+# - is_read, is_unread
+
+# Action types reference:
+# - move (requires target_folder, optional target_account)
+# - delete
+# - archive
+# - mark_read, mark_unread
+# - flag, unflag
+# - reply (requires reply_template)
+# - forward (requires forward_to list)
+# - ignore

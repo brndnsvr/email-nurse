@@ -1,0 +1,78 @@
+# Email Nurse Reply Templates
+# Copy this file to ~/.config/email-nurse/templates.yaml and customize
+#
+# Templates can be:
+#   - Static text (use_ai: false) - sent as-is
+#   - AI instructions (use_ai: true) - AI generates contextual reply
+
+templates:
+  # AI-generated acknowledgment
+  acknowledge:
+    description: "Brief acknowledgment of receipt"
+    use_ai: true
+    content: |
+      Generate a brief, professional acknowledgment of this email.
+      - Thank the sender for their message
+      - Indicate the message has been received and will be reviewed
+      - Keep it under 3 sentences
+      - Match the formality level of the original email
+
+  # Static out-of-office reply
+  out_of_office:
+    description: "Out of office auto-reply"
+    use_ai: false
+    subject_prefix: "Auto-Reply: "
+    content: |
+      Thank you for your email. I am currently out of the office
+      with limited access to email.
+
+      I will respond to your message when I return on [DATE].
+
+      For urgent matters, please contact [BACKUP_CONTACT].
+
+      Best regards
+
+  # AI-generated follow-up request
+  follow_up:
+    description: "Request more information"
+    use_ai: true
+    content: |
+      Generate a polite reply asking for clarification or more details.
+      - Identify the main topic or request in the original email
+      - Ask 1-2 specific questions about what's unclear
+      - Be professional and helpful
+      - Keep it concise
+
+  # AI-generated meeting scheduling
+  schedule_meeting:
+    description: "Propose meeting times"
+    use_ai: true
+    content: |
+      Generate a reply proposing to schedule a meeting.
+      - Acknowledge the topic they want to discuss
+      - Propose 2-3 time slots (make up reasonable business hours)
+      - Ask about their preferred meeting format (call, video, in-person)
+      - Keep it professional
+
+  # Static decline template
+  decline_politely:
+    description: "Politely decline a request"
+    use_ai: true
+    content: |
+      Generate a polite but firm decline to this request.
+      - Thank them for thinking of you
+      - Briefly explain you cannot accommodate the request
+      - Wish them well finding an alternative
+      - Do NOT apologize excessively or make excuses
+      - Keep it professional and concise
+
+  # AI-generated support response
+  support_response:
+    description: "Technical support acknowledgment"
+    use_ai: true
+    content: |
+      Generate a support ticket acknowledgment:
+      - Confirm you received their support request
+      - Briefly summarize your understanding of the issue
+      - Set expectation for response time (within 24-48 hours)
+      - Ask for any additional information that would help
