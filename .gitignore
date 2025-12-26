@@ -65,3 +65,4 @@ deploy/
 # Distribution
 *.tar.gz
 *.whl
+priv-docs/
