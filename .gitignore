@@ -59,6 +59,9 @@ config/rules.yaml
 config/templates.yaml
 config/autopilot.yaml
 
+# Production deployment configs (local backup, not synced to remote)
+deploy/
+
 # Distribution
 *.tar.gz
 *.whl
