@@ -5,9 +5,13 @@ AI-powered email management and automation for macOS Mail.app.
 ## Features
 
 - **Mail.app Integration**: Direct access via AppleScript to read messages, manage mailboxes, and perform actions
+- **Autopilot Mode**: Intelligent email processing with natural language instructions
+- **Quick Rules**: Instant pattern matching before AI (no API cost) for known senders/domains
 - **AI Classification**: Use Claude, OpenAI, or local Ollama models to intelligently categorize emails
-- **Rule Engine**: Define custom rules with conditions and actions
-- **Template Replies**: Auto-generate or use static reply templates
+- **Multi-Level Verbosity**: `-v` compact, `-vv` detailed, `-vvv` debug output
+- **Inbox Aging**: Automatically move stale emails to review folder and clean up
+- **Multi-Account Support**: Process emails from multiple accounts to a central location
+- **Reminders Integration**: View and manage macOS Reminders.app lists
 - **Flexible Actions**: Move, delete, archive, flag, reply, forward emails automatically
 
 ## Installation
@@ -49,12 +53,22 @@ email-nurse accounts list
 # List recent messages
 email-nurse messages list --limit 5
 
-# Classify messages with AI (dry run)
-email-nurse messages classify --provider claude
+# Run autopilot (dry-run to preview)
+email-nurse autopilot run --dry-run -v
 
-# View configured rules
-email-nurse rules list
+# Run autopilot for real
+email-nurse autopilot run -v
+
+# View reminders
+email-nurse reminders lists
 ```
+
+## Utilities
+
+| Script | Description |
+|--------|-------------|
+| `log-viewer.sh` | Interactive log viewer for tailing autopilot logs |
+| `launch-autopilot.sh` | LaunchAgent wrapper for scheduled runs |
 
 ## Documentation
 
@@ -68,6 +82,7 @@ Comprehensive technical documentation is available in the [`docs/`](./docs) dire
 
 Configuration files are stored in `~/.config/email-nurse/`:
 
+- `autopilot.yaml` - Autopilot settings, quick rules, inbox aging ([reference](./docs/configuration.md#autopilotyaml))
 - `rules.yaml` - Processing rules ([reference](./docs/rules-reference.md))
 - `templates.yaml` - Reply templates ([reference](./docs/templates-reference.md))
 

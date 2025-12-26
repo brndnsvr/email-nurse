@@ -52,6 +52,12 @@ autopilot:
   # Specific accounts to process (null = all accounts)
   accounts: null
 
+  # Route specific folders to local "On My Mac" mailboxes instead of account folders
+  # Useful for keeping newsletters/marketing local while syncing important emails
+  # local_folders:
+  #   - Newsletters
+  #   - Marketing
+
   # Never auto-process emails matching these sender patterns
   # (case-insensitive partial match)
   exclude_senders:

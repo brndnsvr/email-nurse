@@ -22,11 +22,13 @@ accounts_app = typer.Typer(help="Manage email accounts")
 messages_app = typer.Typer(help="View and process messages")
 rules_app = typer.Typer(help="Manage processing rules")
 autopilot_app = typer.Typer(help="Autopilot mode operations")
+reminders_app = typer.Typer(help="Apple Reminders integration")
 
 app.add_typer(accounts_app, name="accounts")
 app.add_typer(messages_app, name="messages")
 app.add_typer(rules_app, name="rules")
 app.add_typer(autopilot_app, name="autopilot")
+app.add_typer(reminders_app, name="reminders")
 
 
 def get_settings() -> Settings:
@@ -94,7 +96,7 @@ rules:
     priority: 999
     conditions: []
     use_ai: true
-    ai_context: "Classify this email. Move marketing to Marketing folder, invoices to Finance folder, ignore social notifications."
+    ai_context: "Classify this email. Move marketing to Marketing folder, invoices to Finance folder, social media (not Reddit) to Social folder."
     action:
       action: ignore
 """
@@ -382,10 +384,14 @@ def run(
 def autopilot_run(
     once: Annotated[bool, typer.Option("--once", help="Run once then exit")] = True,
     dry_run: Annotated[bool, typer.Option("--dry-run", "-n", help="Don't execute actions (test mode)")] = False,
-    limit: Annotated[int | None, typer.Option("--limit", "-l", help="Max emails to process")] = None,
-    verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Show detailed output")] = False,
+    limit: Annotated[int | None, typer.Option("--limit", "-l", help="Max emails per batch")] = None,
+    verbose: Annotated[int, typer.Option("--verbose", "-v", count=True, help="Verbosity: -v compact, -vv detailed, -vvv debug")] = 0,
     provider: Annotated[str | None, typer.Option("--provider", "-p", help="AI provider (default from settings)")] = None,
     interactive: Annotated[bool, typer.Option("--interactive", "-i", help="Prompt for folder creation (otherwise queues for later)")] = False,
+    auto_create: Annotated[bool, typer.Option("--auto-create", "-c", help="Auto-create missing folders without prompting")] = False,
+    account: Annotated[str | None, typer.Option("--account", "-a", help="Process only this account (overrides config)")] = None,
+    batch: Annotated[bool, typer.Option("--batch", "-B", help="Process all emails in batches until done")] = False,
+    batch_delay: Annotated[int, typer.Option("--batch-delay", help="Seconds to pause between batches")] = 5,
 ) -> None:
     """Run autopilot email processing."""
     from email_nurse.autopilot import AutopilotEngine, load_autopilot_config
@@ -403,6 +409,10 @@ def autopilot_run(
         raise typer.Exit(1)
 
     config = load_autopilot_config(settings.autopilot_config_path)
+
+    # Override accounts if --account specified
+    if account:
+        config.accounts = [account]
 
     # Get AI provider
     if provider == "claude":
@@ -442,28 +452,151 @@ def autopilot_run(
     else:
         model_name = "unknown"
 
-    console.print("[bold]Autopilot[/bold] starting...")
+    batch_size = limit or 50
+
+    if batch:
+        console.print("[bold]Autopilot[/bold] starting in batch mode...")
+    else:
+        console.print("[bold]Autopilot[/bold] starting...")
     console.print(f"  Provider: {provider}")
     console.print(f"  Model: {model_name}")
+    if account:
+        console.print(f"  Account: {account}")
     console.print(f"  Dry run: {'Yes' if dry_run else 'No'}")
-    console.print(f"  Interactive: {'Yes' if interactive else 'No (queues missing folders)'}")
+    if batch:
+        console.print(f"  Batch size: {batch_size}")
+        console.print(f"  Batch delay: {batch_delay}s")
+    if auto_create:
+        console.print(f"  Auto-create folders: Yes")
+    elif interactive:
+        console.print(f"  Interactive: Yes")
+    else:
+        console.print(f"  Missing folders: Queue for later")
 
-    async def run_autopilot():
-        result = await engine.run(dry_run=dry_run, limit=limit, verbose=verbose, interactive=interactive)
-        return result
+    if batch:
+        # Batch mode: process continuously until no more emails
+        import signal
+        from datetime import datetime
 
-    result = asyncio.run(run_autopilot())
+        from email_nurse.autopilot.models import AutopilotRunResult
 
-    # Print summary
-    console.print(f"\n[bold]Summary[/bold]")
-    console.print(f"  Emails fetched: {result.emails_fetched}")
-    console.print(f"  Emails processed: {result.emails_processed}")
-    console.print(f"  Emails skipped: {result.emails_skipped}")
-    console.print(f"  Actions executed: {result.actions_executed}")
-    console.print(f"  Actions queued: {result.actions_queued}")
-    console.print(f"  Errors: {result.errors}")
-    duration = (result.completed_at - result.started_at).total_seconds()
-    console.print(f"  Duration: {duration:.1f}s")
+        stop_requested = False
+
+        def handle_sigint(sig, frame):
+            nonlocal stop_requested
+            if stop_requested:
+                console.print("\n[red]Force quit[/red]")
+                raise KeyboardInterrupt
+            stop_requested = True
+            console.print("\n[yellow]Stopping after current batch (Ctrl+C again to force)[/yellow]")
+
+        # Install signal handler
+        original_handler = signal.signal(signal.SIGINT, handle_sigint)
+
+        async def run_batch_mode():
+            nonlocal stop_requested
+            started_at = datetime.now()
+
+            # Initialize accumulated result
+            total_result = AutopilotRunResult(
+                started_at=started_at,
+                completed_at=started_at,
+                dry_run=dry_run,
+            )
+            batch_num = 0
+
+            try:
+                while not stop_requested:
+                    batch_num += 1
+                    if verbose >= 1:
+                        console.print(f"\n[bold]Batch {batch_num}[/bold]: Processing up to {batch_size} emails...")
+
+                    result = await engine.run(
+                        dry_run=dry_run,
+                        limit=batch_size,
+                        verbose=verbose,
+                        interactive=interactive,
+                        auto_create=auto_create,
+                    )
+
+                    # Accumulate results
+                    total_result.emails_fetched += result.emails_fetched
+                    total_result.emails_processed += result.emails_processed
+                    total_result.emails_skipped += result.emails_skipped
+                    total_result.actions_executed += result.actions_executed
+                    total_result.actions_queued += result.actions_queued
+                    total_result.errors += result.errors
+
+                    if verbose >= 1:
+                        console.print(
+                            f"Batch {batch_num} complete: "
+                            f"{result.emails_processed} processed, "
+                            f"{result.actions_executed} actions, "
+                            f"{result.errors} errors"
+                        )
+
+                    # Stop if no emails were fetched (inbox is clear)
+                    if result.emails_fetched == 0:
+                        console.print("\n[green]No more unprocessed emails. Done![/green]")
+                        break
+
+                    # Check if stop was requested
+                    if stop_requested:
+                        console.print("\n[yellow]Batch mode stopped by user.[/yellow]")
+                        break
+
+                    # Delay between batches (unless this was the last batch)
+                    if batch_delay > 0 and not stop_requested:
+                        if verbose >= 1:
+                            console.print(f"[dim]Waiting {batch_delay}s before next batch...[/dim]")
+                        await asyncio.sleep(batch_delay)
+
+            except KeyboardInterrupt:
+                console.print("\n[red]Interrupted[/red]")
+
+            total_result.completed_at = datetime.now()
+            return total_result, batch_num
+
+        try:
+            result, total_batches = asyncio.run(run_batch_mode())
+        finally:
+            # Restore original signal handler
+            signal.signal(signal.SIGINT, original_handler)
+
+        # Print batch summary
+        console.print(f"\n[bold]Batch Summary[/bold]")
+        console.print(f"  Total batches: {total_batches}")
+        console.print(f"  Emails fetched: {result.emails_fetched}")
+        console.print(f"  Emails processed: {result.emails_processed}")
+        console.print(f"  Emails skipped: {result.emails_skipped}")
+        console.print(f"  Actions executed: {result.actions_executed}")
+        console.print(f"  Actions queued: {result.actions_queued}")
+        console.print(f"  Errors: {result.errors}")
+        duration = (result.completed_at - result.started_at).total_seconds()
+        if duration >= 60:
+            minutes = int(duration // 60)
+            seconds = int(duration % 60)
+            console.print(f"  Duration: {minutes}m {seconds}s")
+        else:
+            console.print(f"  Duration: {duration:.1f}s")
+    else:
+        # Single run mode (existing behavior)
+        async def run_autopilot():
+            result = await engine.run(dry_run=dry_run, limit=limit, verbose=verbose, interactive=interactive, auto_create=auto_create)
+            return result
+
+        result = asyncio.run(run_autopilot())
+
+        # Print summary
+        console.print(f"\n[bold]Summary[/bold]")
+        console.print(f"  Emails fetched: {result.emails_fetched}")
+        console.print(f"  Emails processed: {result.emails_processed}")
+        console.print(f"  Emails skipped: {result.emails_skipped}")
+        console.print(f"  Actions executed: {result.actions_executed}")
+        console.print(f"  Actions queued: {result.actions_queued}")
+        console.print(f"  Errors: {result.errors}")
+        duration = (result.completed_at - result.started_at).total_seconds()
+        console.print(f"  Duration: {duration:.1f}s")
 
 
 @autopilot_app.command("queue")
@@ -644,7 +777,7 @@ instructions: |
 
   3. NOTIFICATIONS:
      - Archive automated notifications from services (GitHub, etc.)
-     - Mark social media notifications as read
+     - Move social media notifications (LinkedIn, Facebook, Instagram, TikTok, etc. but NOT Reddit) to Social folder
 
   4. REPLIES:
      - Do not auto-reply to anything without my approval
@@ -771,6 +904,206 @@ def autopilot_reset(
     cleared = db.clear_processed(before_days=older_than)
     console.print(f"[green]✓ Cleared {cleared} processed email records.[/green]")
     console.print("Next autopilot run will re-analyze these messages.")
+
+
+@autopilot_app.command("clear-cache")
+def autopilot_clear_cache(
+    account: Annotated[
+        str | None,
+        typer.Option("--account", "-a", help="Clear cache for specific account only"),
+    ] = None,
+) -> None:
+    """Clear cached mailbox lists (forces fresh fetch from Mail.app)."""
+    from email_nurse.storage.database import AutopilotDatabase
+
+    settings = get_settings()
+
+    if not settings.database_path.exists():
+        console.print("[yellow]No database found - nothing to clear.[/yellow]")
+        return
+
+    db = AutopilotDatabase(settings.database_path)
+    cleared = db.clear_mailbox_cache(account=account)
+
+    if cleared > 0:
+        target = f"for {account}" if account else "for all accounts"
+        console.print(f"[green]✓ Cleared mailbox cache {target}.[/green]")
+    else:
+        console.print("[yellow]No cached mailboxes to clear.[/yellow]")
+
+
+# === Reminders Commands ===
+
+
+@reminders_app.command("lists")
+def reminders_lists(
+    counts: Annotated[bool, typer.Option("--counts", "-c", help="Include reminder counts (slow)")] = False,
+) -> None:
+    """List all reminder lists from Reminders.app.
+
+    Note: The --counts option can be very slow if you have lists with
+    thousands of items due to Reminders.app performance limitations.
+    """
+    from email_nurse.reminders import get_lists
+    from email_nurse.reminders.lists import RemindersAppNotRunningError
+
+    try:
+        lists = get_lists(include_counts=counts)
+    except RemindersAppNotRunningError:
+        console.print("[red]Error: Reminders.app is not running.[/red]")
+        console.print("Please open Reminders.app and try again.")
+        raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"[red]Error accessing Reminders.app:[/red] {e}")
+        raise typer.Exit(1)
+
+    if not lists:
+        console.print("[yellow]No reminder lists found[/yellow]")
+        return
+
+    table = Table(title="Reminder Lists")
+    table.add_column("Name", style="cyan")
+    if counts:
+        table.add_column("Incomplete", style="green", justify="right")
+
+    for lst in lists:
+        if counts:
+            count_str = str(lst.count) if lst.count > 0 else "-"
+            table.add_row(lst.name, count_str)
+        else:
+            table.add_row(lst.name)
+
+    console.print(table)
+    if not counts:
+        console.print("[dim]Use --counts to show reminder counts (may be slow)[/dim]")
+
+
+@reminders_app.command("show")
+def reminders_show(
+    list_name: Annotated[str, typer.Argument(help="Name of the reminder list")],
+    completed: Annotated[bool, typer.Option("--completed", "-c", help="Show completed items")] = False,
+    limit: Annotated[int, typer.Option("--limit", "-n", help="Max items to show")] = 50,
+) -> None:
+    """Show reminders in a specific list.
+
+    Note: Lists with many items (1000+) may be slow due to Reminders.app performance.
+    """
+    from email_nurse.reminders import get_reminders
+    from email_nurse.reminders.lists import RemindersAppNotRunningError
+
+    try:
+        # completed=False by default to show incomplete, True to show all (or completed)
+        reminders = get_reminders(
+            list_name=list_name,
+            completed=True if completed else False,
+            limit=limit,
+        )
+    except RemindersAppNotRunningError:
+        console.print("[red]Error: Reminders.app is not running.[/red]")
+        raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"[red]Error fetching reminders:[/red] {e}")
+        raise typer.Exit(1)
+
+    if not reminders:
+        status = "completed" if completed else "incomplete"
+        console.print(f"[yellow]No {status} reminders in '{list_name}'[/yellow]")
+        return
+
+    table = Table(title=f"Reminders: {list_name}")
+    table.add_column("", width=3)  # Status checkbox
+    table.add_column("Name", style="cyan", max_width=50)
+    table.add_column("Due", style="blue", width=12)
+    table.add_column("Priority", width=8)
+    table.add_column("Link", width=4)
+
+    for r in reminders:
+        status = "[green]✓[/green]" if r.completed else "[ ]"
+        due_str = r.due_date.strftime("%Y-%m-%d") if r.due_date else "-"
+
+        priority_styles = {"high": "[red]high[/red]", "medium": "[yellow]med[/yellow]", "low": "[dim]low[/dim]"}
+        priority_str = priority_styles.get(r.priority_label, "-") if r.priority > 0 else "-"
+
+        has_link = "📧" if r.email_link else ""
+
+        table.add_row(status, r.name[:50], due_str, priority_str, has_link)
+
+    console.print(table)
+
+
+@reminders_app.command("incomplete")
+def reminders_incomplete(
+    limit: Annotated[int, typer.Option("--limit", "-n", help="Max items to show")] = 30,
+) -> None:
+    """Show all incomplete reminders across all lists.
+
+    Warning: This may be slow if you have lists with many items.
+    Consider using 'reminders show <list>' for specific lists.
+    """
+    from email_nurse.reminders import get_lists, get_reminders
+    from email_nurse.reminders.lists import RemindersAppNotRunningError
+
+    try:
+        lists = get_lists()
+    except RemindersAppNotRunningError:
+        console.print("[red]Error: Reminders.app is not running.[/red]")
+        raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"[red]Error accessing Reminders.app:[/red] {e}")
+        raise typer.Exit(1)
+
+    # Filter to lists with incomplete items
+    lists_with_items = [lst for lst in lists if lst.count > 0]
+
+    if not lists_with_items:
+        console.print("[yellow]No incomplete reminders found[/yellow]")
+        return
+
+    # Warn about large lists
+    large_lists = [lst for lst in lists_with_items if lst.count > 100]
+    if large_lists:
+        console.print(f"[yellow]Warning: Some lists have many items. This may take a while...[/yellow]")
+
+    all_reminders = []
+    remaining = limit
+
+    for lst in lists_with_items:
+        if remaining <= 0:
+            break
+
+        try:
+            reminders = get_reminders(
+                list_name=lst.name,
+                completed=False,
+                limit=min(remaining, lst.count),
+            )
+            all_reminders.extend(reminders)
+            remaining -= len(reminders)
+        except Exception as e:
+            console.print(f"[yellow]Warning: Could not fetch from '{lst.name}': {e}[/yellow]")
+            continue
+
+    if not all_reminders:
+        console.print("[yellow]No incomplete reminders found[/yellow]")
+        return
+
+    # Sort by due date (None values at end)
+    all_reminders.sort(key=lambda r: (r.due_date is None, r.due_date or ""))
+
+    table = Table(title="Incomplete Reminders")
+    table.add_column("List", style="dim", width=15)
+    table.add_column("Name", style="cyan", max_width=45)
+    table.add_column("Due", style="blue", width=12)
+    table.add_column("Priority", width=8)
+
+    for r in all_reminders:
+        due_str = r.due_date.strftime("%Y-%m-%d") if r.due_date else "-"
+        priority_styles = {"high": "[red]high[/red]", "medium": "[yellow]med[/yellow]", "low": "[dim]low[/dim]"}
+        priority_str = priority_styles.get(r.priority_label, "-") if r.priority > 0 else "-"
+
+        table.add_row(r.list_name[:15], r.name[:45], due_str, priority_str)
+
+    console.print(table)
 
 
 if __name__ == "__main__":

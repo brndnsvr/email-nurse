@@ -1,9 +1,15 @@
 """Mail.app message retrieval and parsing."""
 
+import sys
 from dataclasses import dataclass
 from datetime import datetime
 
 from email_nurse.mail.applescript import escape_applescript_string, run_applescript
+
+# ASCII control characters for parsing AppleScript output
+# These are virtually never found in email content, unlike "|||" or ":::"
+RECORD_SEP = "\x1e"  # ASCII 30 - Record Separator
+UNIT_SEP = "\x1f"  # ASCII 31 - Unit Separator
 
 
 @dataclass
@@ -92,9 +98,12 @@ def get_messages(
                 end if
             end try
 
-            -- Build record with ||| as record separator and ::: as field separator
-            if output is not "" then set output to output & "|||"
-            set output to output & msgId & ":::" & msgMessageId & ":::" & msgSubject & ":::" & msgSender & ":::" & recipList & ":::" & msgDateReceived & ":::" & msgDateSent & ":::" & msgContent & ":::" & msgRead & ":::" & msgMailbox & ":::" & msgAccount
+            -- Build record with ASCII control chars (RS=30, US=31) as delimiters
+            -- These are virtually never found in email content, preventing parse errors
+            set RS to (ASCII character 30)  -- Record Separator
+            set US to (ASCII character 31)  -- Unit Separator
+            if output is not "" then set output to output & RS
+            set output to output & msgId & US & msgMessageId & US & msgSubject & US & msgSender & US & recipList & US & msgDateReceived & US & msgDateSent & US & msgContent & US & msgRead & US & msgMailbox & US & msgAccount
         end repeat
 
         return output
@@ -106,8 +115,8 @@ def get_messages(
         return []
 
     messages = []
-    for msg_str in result.split("|||"):
-        parts = msg_str.split(":::")
+    for msg_str in result.split(RECORD_SEP):
+        parts = msg_str.split(UNIT_SEP)
         if len(parts) >= 11:
             messages.append(
                 EmailMessage(
@@ -161,7 +170,9 @@ def get_message_by_id(message_id: str) -> EmailMessage | None:
             set msgContent to content of msg
         end try
 
-        return "{message_id}" & ":::" & msgMessageId & ":::" & msgSubject & ":::" & msgSender & ":::" & recipList & ":::" & msgDateReceived & ":::" & msgDateSent & ":::" & msgContent & ":::" & msgRead & ":::" & msgMailbox & ":::" & msgAccount
+        -- Use ASCII Unit Separator (31) as delimiter to avoid content collisions
+        set US to (ASCII character 31)
+        return "{message_id}" & US & msgMessageId & US & msgSubject & US & msgSender & US & recipList & US & msgDateReceived & US & msgDateSent & US & msgContent & US & msgRead & US & msgMailbox & US & msgAccount
     end tell
     '''
 
@@ -173,7 +184,7 @@ def get_message_by_id(message_id: str) -> EmailMessage | None:
     if not result:
         return None
 
-    parts = result.split(":::")
+    parts = result.split(UNIT_SEP)
     if len(parts) >= 11:
         return EmailMessage(
             id=parts[0],
@@ -193,15 +204,38 @@ def get_message_by_id(message_id: str) -> EmailMessage | None:
 
 
 def _parse_date(date_str: str) -> datetime | None:
-    """Parse an AppleScript date string into a datetime object."""
+    """Parse an AppleScript date string into a datetime object.
+
+    Handles various formats that AppleScript may return depending on
+    the user's locale and system settings.
+    """
     if not date_str or date_str == "missing value":
         return None
 
-    # AppleScript returns dates like "Friday, December 20, 2024 at 10:30:00 AM"
+    # AppleScript returns dates in various formats depending on locale
     formats = [
-        "%A, %B %d, %Y at %I:%M:%S %p",
-        "%A, %B %d, %Y at %H:%M:%S",
-        "%Y-%m-%d %H:%M:%S",
+        # US English locale formats
+        "%A, %B %d, %Y at %I:%M:%S %p",  # Friday, December 20, 2024 at 10:30:00 AM
+        "%A, %B %d, %Y at %H:%M:%S",  # Friday, December 20, 2024 at 22:30:00
+        # Abbreviated day/month names
+        "%a, %b %d, %Y at %I:%M:%S %p",  # Fri, Dec 20, 2024 at 10:30:00 AM
+        "%a, %b %d, %Y at %H:%M:%S",  # Fri, Dec 20, 2024 at 22:30:00
+        # Without day name
+        "%B %d, %Y at %I:%M:%S %p",  # December 20, 2024 at 10:30:00 AM
+        "%B %d, %Y at %H:%M:%S",  # December 20, 2024 at 22:30:00
+        # ISO 8601 variants
+        "%Y-%m-%d %H:%M:%S",  # 2024-12-20 22:30:00
+        "%Y-%m-%dT%H:%M:%S",  # 2024-12-20T22:30:00
+        "%Y-%m-%d",  # 2024-12-20
+        # European-style formats
+        "%d/%m/%Y %H:%M:%S",  # 20/12/2024 22:30:00
+        "%d/%m/%Y %I:%M:%S %p",  # 20/12/2024 10:30:00 PM
+        # US-style numeric
+        "%m/%d/%Y %H:%M:%S",  # 12/20/2024 22:30:00
+        "%m/%d/%Y %I:%M:%S %p",  # 12/20/2024 10:30:00 PM
+        # Without seconds
+        "%A, %B %d, %Y at %I:%M %p",  # Friday, December 20, 2024 at 10:30 AM
+        "%Y-%m-%d %H:%M",  # 2024-12-20 22:30
     ]
 
     for fmt in formats:
@@ -210,4 +244,9 @@ def _parse_date(date_str: str) -> datetime | None:
         except ValueError:
             continue
 
+    # Log unrecognized format for debugging (only once per unique format)
+    print(
+        f"Warning: Unrecognized date format: {date_str!r}",
+        file=sys.stderr,
+    )
     return None

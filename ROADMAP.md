@@ -1,0 +1,194 @@
+# email-nurse Roadmap
+
+This document outlines planned features and integrations for email-nurse.
+
+---
+
+## Apple Reminders Integration
+
+**Status**: In Progress
+**Priority**: High
+
+### Overview
+
+Add AppleScript integration for Apple Reminders app, enabling:
+- Creating reminders linked back to emails via `message://` URL scheme
+- Viewing and managing reminders from the CLI
+
+### Phase 1.0: Read Operations
+
+**Data Model**:
+```python
+@dataclass
+class Reminder:
+    id: str
+    name: str
+    body: str                    # Notes (stores email links)
+    list_name: str
+    due_date: datetime | None
+    priority: int                # 0=none, 1=high, 5=medium, 9=low
+    completed: bool
+    creation_date: datetime | None
+```
+
+**Functions**:
+- `get_lists() -> list[ReminderList]` - Get all reminder lists
+- `get_reminders(list_name?, completed?) -> list[Reminder]` - Get reminders
+
+**CLI Commands**:
+```bash
+email-nurse reminders list              # List all reminder lists
+email-nurse reminders show <list>       # Show reminders in a list
+email-nurse reminders incomplete        # All incomplete reminders
+```
+
+### Phase 1.2: Write Operations
+
+**Functions**:
+```python
+def create_reminder(name, list_name="Reminders", body=None, due_date=None) -> str
+def create_reminder_from_email(email_message_id, name, list_name, due_date) -> str
+def complete_reminder(reminder_id) -> bool
+def delete_reminder(reminder_id) -> bool
+```
+
+**CLI Commands**:
+```bash
+email-nurse reminders create <name>     # Create reminder
+email-nurse reminders complete <id>     # Mark complete
+```
+
+### Known Limitations
+
+- **Subtasks NOT accessible** via AppleScript (top-level only)
+- **Tags NOT accessible** via AppleScript
+- **Performance is SLOW** (Catalyst app) - use 60s+ timeouts
+
+---
+
+## Apple Calendar Integration
+
+**Status**: Planned
+**Priority**: Medium
+
+### Overview
+
+Add AppleScript integration for Apple Calendar app, enabling:
+- Creating calendar events linked back to emails
+- Viewing upcoming events from the CLI
+
+### Critical Limitation
+
+**As of macOS Sequoia, creating/modifying calendar events via AppleScript is BROKEN.**
+
+Apple confirmed: despite the dictionary showing it, direct event creation is not actually supported.
+
+**Workaround**: Use `parse sentence` command (natural language) instead of direct `make new event`.
+
+### Phase 1.0: Read Operations
+
+**Data Model**:
+```python
+@dataclass
+class CalendarEvent:
+    id: str
+    summary: str                 # Event title
+    description: str
+    location: str | None
+    start_date: datetime
+    end_date: datetime
+    all_day: bool
+    calendar_name: str
+    url: str | None              # Can contain message:// link
+```
+
+**Functions**:
+- `get_calendars() -> list[Calendar]` - Get all calendars
+- `get_events(calendar?, start_date?, end_date?) -> list[CalendarEvent]`
+- `get_events_today() -> list[CalendarEvent]`
+
+**CLI Commands**:
+```bash
+email-nurse calendar list               # List all calendars
+email-nurse calendar events             # Upcoming events (30 days)
+email-nurse calendar today              # Today's events
+```
+
+### Phase 1.2: Write Operations
+
+**Functions**:
+```python
+def create_event_parse_sentence(sentence, calendar_name=None) -> bool
+    # Example: "Meeting tomorrow at 3pm for 1 hour"
+
+def create_event_direct(...) -> str | None  # May fail on Sequoia
+```
+
+**CLI Commands**:
+```bash
+email-nurse calendar create <sentence>  # Natural language event creation
+```
+
+### Known Limitations
+
+- **Direct event creation BROKEN** on macOS Sequoia
+- **Recurring events** have limited AppleScript support
+- Must use `parse sentence` workaround for reliability
+
+---
+
+## Email Linking via `message://` URL
+
+Both Reminders and Calendar events can link back to the original email:
+
+```python
+# Reminders: Store in body field
+body = f"From email: message://<{email.message_id}>\nSubject: {email.subject}"
+
+# Calendar: Store in url field (or description as fallback)
+url = f"message://<{email.message_id}>"
+```
+
+Clicking the `message://` URL in Reminders or Calendar opens the email in Mail.app.
+
+---
+
+## Implementation Order
+
+1. **Shared infrastructure** - `applescript/` module (extract from mail/)
+2. **Reminders read** - lists.py, reminders.py
+3. **Reminders CLI** - list, show, incomplete commands
+4. **Calendar read** - calendars.py, events.py
+5. **Calendar CLI** - list, events, today commands
+6. **Reminders write** - actions.py (create, complete)
+7. **Calendar write** - actions.py (parse_sentence)
+8. **Tests** - Unit tests for parsing, integration tests for live calls
+
+---
+
+## Module Structure
+
+```
+src/email_nurse/
+├── applescript/                 # Shared AppleScript infrastructure
+│   ├── __init__.py
+│   ├── base.py                  # run_applescript(), escape_applescript_string()
+│   └── errors.py                # AppleScriptError, AppNotRunningError
+│
+├── mail/                        # Existing (updated imports)
+│   └── applescript.py           # Re-export from applescript/base
+│
+├── reminders/                   # NEW
+│   ├── __init__.py
+│   ├── lists.py                 # ReminderList dataclass, get_lists()
+│   ├── reminders.py             # Reminder dataclass, get_reminders()
+│   └── actions.py               # create_reminder(), complete_reminder()
+│
+├── calendar/                    # NEW
+│   ├── __init__.py
+│   ├── calendars.py             # Calendar dataclass, get_calendars()
+│   ├── events.py                # CalendarEvent dataclass, get_events()
+│   └── actions.py               # create_event() via parse_sentence
+│
+└── cli.py                       # Extended with reminders_app, calendar_app
+```

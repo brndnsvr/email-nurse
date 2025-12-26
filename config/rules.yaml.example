@@ -77,7 +77,7 @@ rules:
       - Marketing: promotional content, move to "Marketing" folder
       - Finance: invoices, receipts, bills, move to "Finance" folder
       - Personal: personal correspondence, ignore (leave in inbox)
-      - Social: social media notifications, mark as read
+      - Social: social media notifications (LinkedIn, Facebook, Instagram, TikTok, etc. but NOT Reddit), move to "Social" folder
 
       Be conservative - when in doubt, use 'ignore' action.
     action:

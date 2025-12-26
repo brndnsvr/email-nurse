@@ -4,7 +4,10 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+# Type alias for rule actions
+RuleAction = Literal["delete", "move", "archive", "mark_read", "ignore"]
 
 
 class QuickRule(BaseModel):
@@ -14,12 +17,34 @@ class QuickRule(BaseModel):
     match: dict[str, list[str]] = Field(
         description="Match conditions: sender_contains, subject_contains, sender_domain"
     )
-    action: Literal["delete", "move", "archive", "mark_read", "ignore"] = Field(
-        description="Action to take when rule matches"
+    action: RuleAction | None = Field(
+        default=None,
+        description="Single action (use 'actions' for multiple)",
+    )
+    actions: list[RuleAction] | None = Field(
+        default=None,
+        description="List of actions to execute in order",
     )
     folder: str | None = Field(
         default=None, description="Target folder for 'move' action"
     )
+
+    @model_validator(mode="after")
+    def validate_actions(self) -> "QuickRule":
+        """Ensure either action or actions is provided, not both."""
+        if self.action is None and self.actions is None:
+            raise ValueError("Either 'action' or 'actions' must be provided")
+        if self.action is not None and self.actions is not None:
+            raise ValueError("Cannot specify both 'action' and 'actions'")
+        return self
+
+    def get_actions(self) -> list[RuleAction]:
+        """Get list of actions to execute."""
+        if self.actions is not None:
+            return self.actions
+        if self.action is not None:
+            return [self.action]
+        return []
 
 
 class AutopilotConfig(BaseModel):
@@ -49,9 +74,41 @@ class AutopilotConfig(BaseModel):
         description="Central account for all move/archive operations (e.g., 'iCloud'). "
         "When set, emails from other accounts will be moved to folders on this account.",
     )
+    local_folders: list[str] = Field(
+        default_factory=list,
+        description="Folders that route to local 'On My Mac' mailboxes instead of account folders. "
+        "Messages matching rules for these folders will be moved to local storage regardless of source account.",
+    )
     quick_rules: list[QuickRule] = Field(
         default_factory=list,
         description="Deterministic rules that run before AI classification",
+    )
+
+    # Inbox aging settings
+    inbox_aging_enabled: bool = Field(
+        default=False,
+        description="Enable automatic aging of stale inbox emails",
+    )
+    inbox_stale_days: int = Field(
+        default=30,
+        ge=1,
+        description="Days before an email is considered stale and moved to Needs Review",
+    )
+    needs_review_folder: str = Field(
+        default="Needs Review",
+        description="Folder to move stale emails to",
+    )
+    needs_review_retention_days: int = Field(
+        default=14,
+        ge=1,
+        description="Days in Needs Review before auto-deletion to Trash",
+    )
+
+    # Processed email tracking retention
+    processed_retention_days: int = Field(
+        default=365,
+        ge=1,
+        description="Days to retain processed email records before auto-cleanup",
     )
 
 

@@ -4,6 +4,11 @@ from dataclasses import dataclass
 
 from email_nurse.mail.applescript import run_applescript
 
+# ASCII control characters for parsing AppleScript output
+# These are virtually never found in account names, preventing parse errors
+RECORD_SEP = "\x1e"  # ASCII 30 - Record Separator
+UNIT_SEP = "\x1f"  # ASCII 31 - Unit Separator
+
 
 @dataclass
 class MailAccount:
@@ -37,8 +42,11 @@ def get_accounts() -> list[MailAccount]:
                 if emailList is not "" then set emailList to emailList & ","
                 set emailList to emailList & addr
             end repeat
-            if output is not "" then set output to output & "|||"
-            set output to output & acctName & ":::" & acctId & ":::" & emailList & ":::" & acctEnabled & ":::" & acctType
+            -- Use ASCII control chars (RS=30, US=31) as delimiters to avoid collisions
+            set RS to (ASCII character 30)
+            set US to (ASCII character 31)
+            if output is not "" then set output to output & RS
+            set output to output & acctName & US & acctId & US & emailList & US & acctEnabled & US & acctType
         end repeat
         return output
     end tell
@@ -49,8 +57,8 @@ def get_accounts() -> list[MailAccount]:
         return []
 
     accounts = []
-    for account_str in result.split("|||"):
-        parts = account_str.split(":::")
+    for account_str in result.split(RECORD_SEP):
+        parts = account_str.split(UNIT_SEP)
         if len(parts) >= 5:
             accounts.append(
                 MailAccount(
