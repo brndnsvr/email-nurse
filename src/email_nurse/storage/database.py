@@ -8,6 +8,19 @@ from pathlib import Path
 from typing import Any, Generator
 
 
+def _safe_json_loads(data: str | None, default: Any = None) -> Any:
+    """Safely parse JSON, returning default on error."""
+    if not data:
+        return default
+    try:
+        return json.loads(data)
+    except (json.JSONDecodeError, TypeError) as e:
+        # Log but don't crash - return default for corrupted data
+        import sys
+        print(f"Warning: Failed to parse JSON in database: {e}", file=sys.stderr)
+        return default
+
+
 class AutopilotDatabase:
     """SQLite database for tracking processed emails and pending actions."""
 
@@ -83,6 +96,14 @@ class AutopilotDatabase:
                     cached_at TEXT NOT NULL
                 );
 
+                -- Track when emails were first seen (for inbox aging)
+                CREATE TABLE IF NOT EXISTS email_first_seen (
+                    message_id TEXT PRIMARY KEY,
+                    mailbox TEXT NOT NULL,
+                    account TEXT NOT NULL,
+                    first_seen_at TEXT NOT NULL
+                );
+
                 -- Indexes for common queries
                 CREATE INDEX IF NOT EXISTS idx_processed_at
                     ON processed_emails(processed_at);
@@ -90,6 +111,8 @@ class AutopilotDatabase:
                     ON pending_actions(status);
                 CREATE INDEX IF NOT EXISTS idx_audit_timestamp
                     ON audit_log(timestamp);
+                CREATE INDEX IF NOT EXISTS idx_first_seen_at
+                    ON email_first_seen(first_seen_at);
             """)
 
     # ─── Processed Emails ─────────────────────────────────────────────────
@@ -163,6 +186,18 @@ class AutopilotDatabase:
                 cursor = conn.execute("DELETE FROM processed_emails")
             return cursor.rowcount
 
+    def cleanup_old_records(self, retention_days: int) -> int:
+        """
+        Remove processed email records older than retention period.
+
+        Args:
+            retention_days: Delete records older than this many days.
+
+        Returns:
+            Number of records deleted.
+        """
+        return self.clear_processed(before_days=retention_days)
+
     # ─── Pending Actions Queue ────────────────────────────────────────────
 
     def add_pending_action(
@@ -190,7 +225,9 @@ class AutopilotDatabase:
                     datetime.now().isoformat(),
                 ),
             )
-            return cursor.lastrowid or 0
+            if cursor.lastrowid is None:
+                raise RuntimeError("Failed to insert pending action - no lastrowid returned")
+            return cursor.lastrowid
 
     def get_pending_actions(
         self,
@@ -216,7 +253,7 @@ class AutopilotDatabase:
                     "id": row["id"],
                     "message_id": row["message_id"],
                     "email_summary": row["email_summary"],
-                    "proposed_action": json.loads(row["proposed_action"]),
+                    "proposed_action": _safe_json_loads(row["proposed_action"], {}),
                     "confidence": row["confidence"],
                     "reasoning": row["reasoning"],
                     "created_at": row["created_at"],
@@ -325,7 +362,7 @@ class AutopilotDatabase:
                     "action": row["action"],
                     "source": row["source"],
                     "timestamp": row["timestamp"],
-                    "details": json.loads(row["details"]) if row["details"] else None,
+                    "details": _safe_json_loads(row["details"]),
                 })
             return results
 
@@ -396,7 +433,7 @@ class AutopilotDatabase:
             if age_minutes > max_age_minutes:
                 return None  # Cache expired
 
-            return json.loads(row["mailboxes"])
+            return _safe_json_loads(row["mailboxes"], None)
 
     def set_cached_mailboxes(self, account: str, mailboxes: list[str]) -> None:
         """
@@ -413,4 +450,95 @@ class AutopilotDatabase:
                 VALUES (?, ?, ?)
                 """,
                 (account, json.dumps(mailboxes), datetime.now().isoformat()),
+            )
+
+    def clear_mailbox_cache(self, account: str | None = None) -> int:
+        """
+        Clear cached mailbox lists.
+
+        Args:
+            account: Specific account to clear, or None for all accounts.
+
+        Returns:
+            Number of cache entries cleared.
+        """
+        with self._connection() as conn:
+            if account:
+                cursor = conn.execute(
+                    "DELETE FROM mailbox_cache WHERE account = ?",
+                    (account,),
+                )
+            else:
+                cursor = conn.execute("DELETE FROM mailbox_cache")
+            return cursor.rowcount
+
+    # ─── Email First Seen (Inbox Aging) ───────────────────────────────────
+
+    def track_first_seen(
+        self,
+        message_id: str,
+        mailbox: str,
+        account: str,
+    ) -> None:
+        """Record when an email was first seen by autopilot.
+
+        Uses INSERT OR REPLACE so that if an email returns to INBOX
+        (e.g., user moves it back), it gets a fresh timestamp instead
+        of immediately aging out.
+        """
+        with self._connection() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO email_first_seen
+                (message_id, mailbox, account, first_seen_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (message_id, mailbox, account, datetime.now().isoformat()),
+            )
+
+    def get_first_seen(self, message_id: str) -> dict[str, Any] | None:
+        """Get first-seen info for an email."""
+        with self._connection() as conn:
+            cursor = conn.execute(
+                "SELECT * FROM email_first_seen WHERE message_id = ?",
+                (message_id,),
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
+            return {
+                "message_id": row["message_id"],
+                "mailbox": row["mailbox"],
+                "account": row["account"],
+                "first_seen_at": row["first_seen_at"],
+            }
+
+    def get_stale_inbox_emails(self, stale_days: int) -> list[dict[str, Any]]:
+        """Get emails first seen more than N days ago."""
+        with self._connection() as conn:
+            cursor = conn.execute(
+                """
+                SELECT message_id, mailbox, account, first_seen_at
+                FROM email_first_seen
+                WHERE datetime(first_seen_at) < datetime('now', ?)
+                ORDER BY first_seen_at ASC
+                """,
+                (f"-{stale_days} days",),
+            )
+            return [
+                {
+                    "message_id": row["message_id"],
+                    "mailbox": row["mailbox"],
+                    "account": row["account"],
+                    "first_seen_at": row["first_seen_at"],
+                }
+                for row in cursor.fetchall()
+            ]
+
+    def remove_first_seen(self, message_id: str) -> None:
+        """Remove first-seen tracking for an email (after it's moved/deleted)."""
+        with self._connection() as conn:
+            conn.execute(
+                "DELETE FROM email_first_seen WHERE message_id = ?",
+                (message_id,),
             )

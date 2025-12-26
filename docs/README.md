@@ -102,6 +102,113 @@ Complete reference for `templates.yaml`:
 
 **Read this** to create effective reply templates.
 
+## Autopilot Mode
+
+Autopilot is the intelligent email processing mode that combines quick rules with AI classification.
+
+### Running Autopilot
+
+```bash
+# Dry-run (see what would happen)
+email-nurse autopilot run --dry-run
+
+# Process emails
+email-nurse autopilot run
+
+# Process specific account only
+email-nurse autopilot run --account "Gmail"
+
+# Limit emails processed
+email-nurse autopilot run --limit 10
+```
+
+### Verbosity Levels
+
+Control output detail with `-v` flags:
+
+| Flag | Level | Output |
+|------|-------|--------|
+| (none) | Silent | Summary only |
+| `-v` | Compact | Action + sender, subject per email |
+| `-vv` | Detailed | Adds reasoning/error messages |
+| `-vvv` | Debug | Full metadata (IDs, timestamps, rules) |
+
+```bash
+email-nurse autopilot run -v      # Compact
+email-nurse autopilot run -vv     # Detailed
+email-nurse autopilot run -vvv    # Debug
+```
+
+### Folder Handling
+
+When a target folder doesn't exist:
+
+| Flag | Behavior |
+|------|----------|
+| (default) | Queue action for later approval |
+| `-i, --interactive` | Prompt to create or use similar folder |
+| `-c, --auto-create` | Automatically create missing folders |
+
+```bash
+email-nurse autopilot run --interactive   # Prompt for decisions
+email-nurse autopilot run --auto-create   # Create folders automatically
+```
+
+### Managing Queued Actions
+
+```bash
+# List pending actions
+email-nurse autopilot queue
+
+# Approve a queued action
+email-nurse autopilot approve <id>
+
+# Reject a queued action
+email-nurse autopilot reject <id>
+
+# View action history
+email-nurse autopilot history --limit 20
+```
+
+### Other Autopilot Commands
+
+```bash
+# Show autopilot status and statistics
+email-nurse autopilot status
+
+# Reset processed email tracking
+email-nurse autopilot reset
+
+# Clear mailbox cache (force refresh)
+email-nurse autopilot clear-cache
+```
+
+## Reminders Integration
+
+Email Nurse integrates with macOS Reminders.app.
+
+### Viewing Reminders
+
+```bash
+# List all reminder lists
+email-nurse reminders lists
+
+# List with item counts (slower on large lists)
+email-nurse reminders lists --counts
+
+# Show reminders in a specific list
+email-nurse reminders show "Shopping"
+
+# Show all incomplete reminders across all lists
+email-nurse reminders incomplete
+```
+
+### Notes
+
+- Reminders.app uses Catalyst and can be slow with large lists (1000+ items)
+- The `--counts` flag may timeout on very large lists
+- Email links in reminders are displayed when present
+
 ## Architecture Overview
 
 ### System Components
@@ -110,28 +217,27 @@ Complete reference for `templates.yaml`:
 Email Nurse
 ├── Mail.app Integration (AppleScript)
 │   ├── Read messages
-│   ├── Execute actions
+│   ├── Execute actions (move, delete, archive, etc.)
 │   └── Create drafts
 │
-├── Rule Engine
-│   ├── Load rules.yaml
-│   ├── Evaluate conditions
-│   ├── Match emails
-│   └── Trigger actions
+├── Autopilot Engine
+│   ├── Quick Rules (instant, no AI)
+│   ├── AI Classification
+│   ├── Inbox Aging
+│   └── Pending Actions Queue
 │
-├── AI Classification
+├── AI Providers
 │   ├── Claude (Anthropic)
 │   ├── OpenAI (GPT-4)
 │   └── Ollama (Local)
 │
-├── Template Engine
-│   ├── Load templates.yaml
-│   ├── Variable substitution
-│   └── AI generation
+├── Reminders.app Integration
+│   ├── List reminders
+│   └── Show incomplete items
 │
 └── CLI Interface
-    ├── email-nurse process
-    ├── email-nurse daemon
+    ├── email-nurse autopilot run
+    ├── email-nurse reminders
     └── email-nurse messages
 ```
 

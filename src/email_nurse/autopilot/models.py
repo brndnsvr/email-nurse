@@ -107,3 +107,11 @@ class AutopilotRunResult(BaseModel):
     def duration_seconds(self) -> float:
         """Get run duration in seconds."""
         return (self.completed_at - self.started_at).total_seconds()
+
+
+class AgingResult(BaseModel):
+    """Summary of inbox aging checks."""
+
+    moved_to_review: int = Field(default=0, description="Emails moved to Needs Review")
+    deleted_from_review: int = Field(default=0, description="Emails deleted from Needs Review")
+    errors: int = Field(default=0, description="Errors during aging")

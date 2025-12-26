@@ -1,6 +1,7 @@
 """Autopilot engine for AI-native email processing."""
 
 import asyncio
+import sys
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
@@ -9,6 +10,7 @@ from rich.console import Console
 from email_nurse.ai.base import EmailAction
 from email_nurse.autopilot.config import AutopilotConfig, QuickRule
 from email_nurse.autopilot.models import (
+    AgingResult,
     AutopilotDecision,
     AutopilotRunResult,
     LowConfidenceAction,
@@ -16,17 +18,21 @@ from email_nurse.autopilot.models import (
     ProcessResult,
 )
 from email_nurse.mail.actions import (
+    LOCAL_ACCOUNT_KEY,
     VIRTUAL_MAILBOXES,
+    create_local_mailbox,
     create_mailbox,
     delete_message,
     find_similar_mailbox,
     flag_message,
     forward_message,
     get_all_mailboxes,
+    get_local_mailboxes,
     mark_as_read,
     move_message,
     reply_to_message,
 )
+from email_nurse.mail.accounts import get_accounts
 from email_nurse.mail.messages import EmailMessage, get_messages
 from email_nurse.storage.database import AutopilotDatabase
 
@@ -61,42 +67,162 @@ class AutopilotEngine:
         self.db = database
         self.config = config
         self.mailbox_cache: list[str] = []
-        self._cache_loaded = False
+        self._local_mailbox_cache: list[str] = []
+        self._cache_loaded_for: str | None = None  # Track which account cache is loaded for
 
-    def _load_mailbox_cache(self) -> None:
-        """Load mailbox names from disk cache or Mail.app."""
-        if self._cache_loaded:
+    def _load_mailbox_cache(self, account: str | None = None) -> None:
+        """Load mailbox names from disk cache or Mail.app.
+
+        Args:
+            account: Account to load mailboxes for. If not provided,
+                     uses main_account from config, or first account in config.accounts.
+        """
+        # Determine which account to load mailboxes for
+        target_account = account or self.config.main_account
+        if not target_account and self.config.accounts:
+            target_account = self.config.accounts[0]
+
+        if not target_account:
+            # No account specified anywhere - can't load mailboxes
             return
-        if not self.config.main_account:
-            self._cache_loaded = True
+
+        # Check if we already have mailboxes for this specific account
+        if self._cache_loaded_for == target_account and self.mailbox_cache:
             return
 
         # Try disk cache first
         cached = self.db.get_cached_mailboxes(
-            self.config.main_account,
+            target_account,
             self.settings.mailbox_cache_ttl_minutes,
         )
         if cached is not None:
             self.mailbox_cache = cached
-            self._cache_loaded = True
+            self._cache_loaded_for = target_account
             return
 
         # Cache miss or expired - fetch from Mail.app and store
         try:
-            self.mailbox_cache = get_all_mailboxes(self.config.main_account)
-            self.db.set_cached_mailboxes(self.config.main_account, self.mailbox_cache)
+            self.mailbox_cache = get_all_mailboxes(target_account)
+            self.db.set_cached_mailboxes(target_account, self.mailbox_cache)
+            self._cache_loaded_for = target_account  # Only mark loaded on success
         except Exception as e:
             console.print(f"[yellow]Warning: Failed to load mailboxes:[/yellow] {e}")
             self.mailbox_cache = []
-        self._cache_loaded = True
+            self._cache_loaded_for = None  # Don't mark loaded on failure - allow retry
+
+    def _is_local_folder(self, folder_name: str) -> bool:
+        """Check if a folder should route to local 'On My Mac' mailboxes."""
+        return any(
+            f.lower() == folder_name.lower()
+            for f in self.config.local_folders
+        )
+
+    def _load_local_mailbox_cache(self) -> list[str]:
+        """Load local 'On My Mac' mailbox names from cache or Mail.app."""
+        # Check if we already have a local mailbox cache in memory
+        if hasattr(self, '_local_mailbox_cache') and self._local_mailbox_cache:
+            return self._local_mailbox_cache
+
+        # Try disk cache first
+        cached = self.db.get_cached_mailboxes(
+            LOCAL_ACCOUNT_KEY,
+            self.settings.mailbox_cache_ttl_minutes,
+        )
+        if cached is not None:
+            self._local_mailbox_cache = cached
+            return cached
+
+        # Cache miss - fetch from Mail.app
+        try:
+            self._local_mailbox_cache = get_local_mailboxes()
+            self.db.set_cached_mailboxes(LOCAL_ACCOUNT_KEY, self._local_mailbox_cache)
+            return self._local_mailbox_cache
+        except Exception as e:
+            console.print(f"[yellow]Warning: Failed to load local mailboxes:[/yellow] {e}")
+            self._local_mailbox_cache = []
+            return []
+
+    def _validate_account_name(self, account_name: str) -> str:
+        """Validate account name and return the correctly-cased version.
+
+        AppleScript account lookups are case-sensitive, so we need to
+        match the exact name Mail.app uses.
+
+        Args:
+            account_name: Account name from CLI/config
+
+        Returns:
+            The correctly-cased account name from Mail.app
+
+        Raises:
+            ValueError: If account doesn't exist in Mail.app
+        """
+        try:
+            all_accounts = get_accounts()
+        except Exception:
+            # Can't validate - let it fail later with the original name
+            return account_name
+
+        account_names = [a.name for a in all_accounts]
+
+        # Exact match - use as-is
+        if account_name in account_names:
+            return account_name
+
+        # Case-insensitive match - return correctly-cased version
+        lower_name = account_name.lower()
+        for name in account_names:
+            if name.lower() == lower_name:
+                return name
+
+        # No match - raise helpful error with available accounts
+        available = ", ".join(f'"{n}"' for n in account_names) or "none found"
+        raise ValueError(
+            f'Account "{account_name}" not found in Mail.app. '
+            f"Available accounts: {available}"
+        )
+
+    def _validate_mailbox_name(self, mailbox_name: str, account: str) -> str | None:
+        """Validate mailbox name and return the correctly-cased version.
+
+        AppleScript mailbox lookups are case-sensitive, so we need to
+        match the exact name Mail.app uses. Exchange/Outlook use "Inbox"
+        while IMAP typically uses "INBOX".
+
+        Args:
+            mailbox_name: Mailbox name from config (e.g., "INBOX")
+            account: Account name to check mailboxes for
+
+        Returns:
+            The correctly-cased mailbox name, or None if not found
+        """
+        try:
+            mailboxes = get_all_mailboxes(account)
+        except Exception:
+            # Can't validate - let it fail later with the original name
+            return mailbox_name
+
+        # Exact match - use as-is
+        if mailbox_name in mailboxes:
+            return mailbox_name
+
+        # Case-insensitive match - return correctly-cased version
+        lower_name = mailbox_name.lower()
+        for name in mailboxes:
+            if name.lower() == lower_name:
+                return name
+
+        # No match found
+        return None
 
     async def run(
         self,
         *,
         dry_run: bool = False,
         limit: int | None = None,
-        verbose: bool = False,
+        verbose: int = 0,
         interactive: bool = False,
+        auto_create: bool = False,
     ) -> AutopilotRunResult:
         """
         Run autopilot processing on emails.
@@ -104,8 +230,9 @@ class AutopilotEngine:
         Args:
             dry_run: If True, don't execute actions, just show what would happen.
             limit: Maximum emails to process (overrides settings).
-            verbose: Show detailed output.
+            verbose: Verbosity level (0=silent, 1=compact, 2=detailed, 3=debug).
             interactive: If True, prompt for folder creation. If False, queue for later.
+            auto_create: If True, auto-create missing folders without prompting.
 
         Returns:
             AutopilotRunResult with summary statistics.
@@ -130,14 +257,14 @@ class AutopilotEngine:
             result.completed_at = datetime.now()
             return result
 
-        if verbose:
+        if verbose >= 1:
             console.print(f"\n[bold]Processing {len(emails)} emails...[/bold]\n")
 
         # Process each email
         for email in emails:
             try:
                 process_result = await self._process_email(
-                    email, dry_run=dry_run, interactive=interactive
+                    email, dry_run=dry_run, interactive=interactive, auto_create=auto_create
                 )
 
                 if process_result.skipped:
@@ -151,8 +278,8 @@ class AutopilotEngine:
                 else:
                     result.errors += 1
 
-                if verbose:
-                    self._print_result(email, process_result)
+                if verbose >= 1:
+                    self._print_result(email, process_result, verbose)
 
                 # Rate limiting
                 if self.settings.autopilot_rate_limit_delay > 0:
@@ -160,16 +287,27 @@ class AutopilotEngine:
 
             except Exception as e:
                 result.errors += 1
-                if verbose:
+                if verbose >= 1:
                     console.print(f"[red]Error processing {email.subject[:40]}:[/red] {e}")
+
+        # Run inbox aging checks if enabled
+        if self.config.inbox_aging_enabled:
+            await self._run_aging_checks(dry_run, verbose)
+
+        # Cleanup old processed email records (retention policy)
+        if not dry_run:
+            deleted = self.db.cleanup_old_records(self.config.processed_retention_days)
+            if deleted > 0 and verbose >= 1:
+                console.print(
+                    f"[dim]Cleaned up {deleted} processed records "
+                    f"older than {self.config.processed_retention_days} days[/dim]"
+                )
 
         result.completed_at = datetime.now()
         return result
 
     async def _get_unprocessed_emails(self, limit: int) -> list[EmailMessage]:
         """Get emails that haven't been processed yet."""
-        from email_nurse.mail.accounts import get_accounts
-
         # Get already processed IDs for filtering
         processed_ids = self.db.get_processed_ids(limit=10000)
 
@@ -190,14 +328,44 @@ class AutopilotEngine:
                 console.print(f"[yellow]Warning: Failed to get accounts:[/yellow] {e}")
                 accounts = []
 
+        # Validate account names (case-sensitive matching for AppleScript)
+        validated_accounts = []
+        for account in accounts:
+            try:
+                validated_name = self._validate_account_name(account)
+                if validated_name != account:
+                    console.print(
+                        f"[dim]Note: Using '{validated_name}' "
+                        f"(matched from '{account}')[/dim]"
+                    )
+                validated_accounts.append(validated_name)
+            except ValueError as e:
+                console.print(f"[red]Error: {e}[/red]")
+                # Skip invalid accounts but continue with others
+        accounts = validated_accounts
+
         for mailbox in self.config.mailboxes:
             for account in accounts:
+                # Validate mailbox name (case-insensitive for Exchange vs IMAP)
+                actual_mailbox = self._validate_mailbox_name(mailbox, account)
+                if actual_mailbox is None:
+                    console.print(
+                        f"[yellow]Warning: Mailbox '{mailbox}' not found "
+                        f"in account '{account}', skipping[/yellow]"
+                    )
+                    continue
+                if actual_mailbox != mailbox:
+                    console.print(
+                        f"[dim]Note: Using '{actual_mailbox}' "
+                        f"(matched from '{mailbox}') for {account}[/dim]"
+                    )
+
                 try:
                     # Fetch extra to account for filtering, but cap at 100 to avoid timeout
                     # (AppleScript is slow - ~1s per message with content)
                     fetch_limit = min(limit * 3, 100)
                     messages = get_messages(
-                        mailbox=mailbox,
+                        mailbox=actual_mailbox,
                         account=account,
                         limit=fetch_limit,
                         unread_only=False,  # Process ALL emails
@@ -206,11 +374,11 @@ class AutopilotEngine:
                     # for everything, but we need the actual mailbox for lookups)
                     for msg in messages:
                         if msg.mailbox in VIRTUAL_MAILBOXES or msg.mailbox.startswith("[Gmail]"):
-                            msg.mailbox = mailbox
+                            msg.mailbox = actual_mailbox
                     all_emails.extend(messages)
                 except Exception as e:
                     console.print(
-                        f"[yellow]Warning: Failed to fetch from {mailbox}"
+                        f"[yellow]Warning: Failed to fetch from {actual_mailbox}"
                         f"{f' ({account})' if account else ''}:[/yellow] {e}"
                     )
 
@@ -245,10 +413,15 @@ class AutopilotEngine:
         *,
         dry_run: bool = False,
         interactive: bool = False,
+        auto_create: bool = False,
     ) -> ProcessResult:
         """Process a single email through autopilot."""
+        # Track first-seen for inbox aging (only if aging is enabled)
+        if self.config.inbox_aging_enabled and not dry_run:
+            self.db.track_first_seen(email.id, email.mailbox, email.account)
+
         # Try quick rules first (instant, no API cost)
-        quick_result = self._apply_quick_rules(email, dry_run, interactive)
+        quick_result = self._apply_quick_rules(email, dry_run, interactive, auto_create)
         if quick_result is not None:
             return quick_result
 
@@ -256,6 +429,11 @@ class AutopilotEngine:
         try:
             decision = await self.ai.autopilot_classify(email, self.config.instructions)
         except Exception as e:
+            # Log the error so users can debug AI failures
+            print(
+                f"AI classification failed for {email.id}: {type(e).__name__}: {e}",
+                file=sys.stderr,
+            )
             return ProcessResult(
                 message_id=email.id,
                 success=False,
@@ -271,7 +449,7 @@ class AutopilotEngine:
             return await self._handle_outbound(email, decision, dry_run, interactive)
 
         # Execute the action
-        return await self._execute_action(email, decision, dry_run, interactive)
+        return await self._execute_action(email, decision, dry_run, interactive, auto_create)
 
     async def _handle_low_confidence(
         self,
@@ -414,28 +592,64 @@ class AutopilotEngine:
     def _resolve_folder(
         self,
         target_folder: str,
-        target_account: str,
+        target_account: str | None,
         email: EmailMessage,
         decision: AutopilotDecision,
         interactive: bool,
+        auto_create: bool = False,
     ) -> ProcessResult | None:
         """
         Check if folder exists and handle missing folders.
+
+        Args:
+            target_account: Account to check, or LOCAL_ACCOUNT_KEY for local "On My Mac" mailboxes.
 
         Returns:
             - None if folder exists or was created (continue with action)
             - ProcessResult if action should be queued or skipped
         """
+        is_local = target_account == LOCAL_ACCOUNT_KEY
+
+        # Load appropriate mailbox cache
+        if is_local:
+            mailbox_list = self._load_local_mailbox_cache()
+        else:
+            self._load_mailbox_cache(target_account)
+            mailbox_list = self.mailbox_cache
+
         # Check if folder exists in cache (case-insensitive)
         folder_exists = any(
-            f.lower() == target_folder.lower() for f in self.mailbox_cache
+            f.lower() == target_folder.lower() for f in mailbox_list
         )
 
         if folder_exists:
             return None  # Continue with action
 
         # Folder doesn't exist - find similar
-        similar = find_similar_mailbox(target_folder, self.mailbox_cache)
+        similar = find_similar_mailbox(target_folder, mailbox_list)
+
+        if auto_create:
+            # Auto-create mode - just create the folder
+            try:
+                if is_local:
+                    create_local_mailbox(target_folder)
+                    self._local_mailbox_cache.append(target_folder)
+                    # Update disk cache atomically to keep in sync
+                    self.db.set_cached_mailboxes(LOCAL_ACCOUNT_KEY, self._local_mailbox_cache)
+                else:
+                    create_mailbox(target_folder, target_account)
+                    self.mailbox_cache.append(target_folder)
+                    # Update disk cache atomically to keep in sync
+                    self.db.set_cached_mailboxes(target_account, self.mailbox_cache)
+                location = "On My Mac" if is_local else target_account
+                console.print(f"        [green]✓ Created \"{target_folder}\" ({location})[/green]")
+                return None  # Continue with action
+            except Exception as e:
+                return ProcessResult(
+                    message_id=email.id,
+                    success=False,
+                    error=f"Failed to create folder \"{target_folder}\": {e}",
+                )
 
         if interactive:
             # Prompt user for decision
@@ -454,11 +668,18 @@ class AutopilotEngine:
             if should_create:
                 # Create the folder
                 try:
-                    create_mailbox(chosen_folder, target_account)
-                    self.mailbox_cache.append(chosen_folder)
-                    # Update disk cache too
-                    self.db.set_cached_mailboxes(target_account, self.mailbox_cache)
-                    console.print(f"        [green]✓ Created \"{chosen_folder}\"[/green]")
+                    if is_local:
+                        create_local_mailbox(chosen_folder)
+                        self._local_mailbox_cache.append(chosen_folder)
+                        # Update disk cache atomically to keep in sync
+                        self.db.set_cached_mailboxes(LOCAL_ACCOUNT_KEY, self._local_mailbox_cache)
+                    else:
+                        create_mailbox(chosen_folder, target_account)
+                        self.mailbox_cache.append(chosen_folder)
+                        # Update disk cache atomically to keep in sync
+                        self.db.set_cached_mailboxes(target_account, self.mailbox_cache)
+                    location = "On My Mac" if is_local else target_account
+                    console.print(f"        [green]✓ Created \"{chosen_folder}\" ({location})[/green]")
                 except Exception as e:
                     return ProcessResult(
                         message_id=email.id,
@@ -495,6 +716,7 @@ class AutopilotEngine:
         decision: AutopilotDecision,
         dry_run: bool,
         interactive: bool = False,
+        auto_create: bool = False,
     ) -> ProcessResult:
         """Execute the decided action."""
         action_name = decision.action.value
@@ -515,32 +737,45 @@ class AutopilotEngine:
             )
 
         # Determine target account for move operations
-        # If main_account is set, all moves go there; otherwise use source account
-        target_account = self.config.main_account or email.account
+        # Check if folder should go to local "On My Mac" mailboxes
+        if decision.target_folder and self._is_local_folder(decision.target_folder):
+            target_account = LOCAL_ACCOUNT_KEY  # Route to local "On My Mac"
+        elif decision.action == EmailAction.ARCHIVE and self._is_local_folder("Archive"):
+            target_account = LOCAL_ACCOUNT_KEY  # Archive locally if Archive is in local_folders
+        else:
+            # Standard routing: main_account or source account
+            target_account = self.config.main_account or email.account
 
         try:
             match decision.action:
                 case EmailAction.MOVE:
-                    if decision.target_folder:
-                        # Check if folder exists and handle if not
-                        result = self._resolve_folder(
-                            decision.target_folder,
-                            target_account,
-                            email,
-                            decision,
-                            interactive,
+                    if not decision.target_folder:
+                        # Empty/None target folder is invalid for MOVE
+                        return ProcessResult(
+                            message_id=email.id,
+                            success=False,
+                            error="MOVE action requires target_folder but none provided",
                         )
-                        if result is not None:
-                            return result  # Queued or skipped
+                    # Check if folder exists and handle if not
+                    result = self._resolve_folder(
+                        decision.target_folder,
+                        target_account,
+                        email,
+                        decision,
+                        interactive,
+                        auto_create,
+                    )
+                    if result is not None:
+                        return result  # Queued or skipped
 
-                        # Folder resolved - execute move
-                        move_message(
-                            email.id,
-                            decision.target_folder,
-                            target_account,
-                            source_mailbox=email.mailbox,
-                            source_account=email.account,
-                        )
+                    # Folder resolved - execute move
+                    move_message(
+                        email.id,
+                        decision.target_folder,
+                        target_account,
+                        source_mailbox=email.mailbox,
+                        source_account=email.account,
+                    )
 
                 case EmailAction.DELETE:
                     # Delete always goes to the source account's trash
@@ -559,6 +794,7 @@ class AutopilotEngine:
                         email,
                         decision,
                         interactive,
+                        auto_create,
                     )
                     if result is not None:
                         return result  # Queued or skipped
@@ -613,6 +849,10 @@ class AutopilotEngine:
             # Mark as processed and log
             self._mark_processed(email, decision)
 
+            # Remove from first-seen tracking if email was moved out of inbox
+            if decision.action != EmailAction.IGNORE:
+                self.db.remove_first_seen(email.id)
+
             return ProcessResult(
                 message_id=email.id,
                 success=True,
@@ -634,8 +874,8 @@ class AutopilotEngine:
             message_id=email.id,
             mailbox=email.mailbox,
             account=email.account,
-            subject=email.subject[:100],
-            sender=email.sender[:100],
+            subject=(email.subject or "")[:100],
+            sender=(email.sender or "")[:100],
             action=decision.model_dump(),
             confidence=decision.confidence,
         )
@@ -675,6 +915,7 @@ class AutopilotEngine:
         email: EmailMessage,
         dry_run: bool,
         interactive: bool,
+        auto_create: bool = False,
     ) -> ProcessResult | None:
         """
         Apply quick rules before AI classification.
@@ -684,7 +925,7 @@ class AutopilotEngine:
         """
         for rule in self.config.quick_rules:
             if self._matches_rule(email, rule):
-                return self._execute_quick_rule(email, rule, dry_run, interactive)
+                return self._execute_quick_rule(email, rule, dry_run, interactive, auto_create)
         return None  # No match, continue to AI
 
     def _matches_rule(self, email: EmailMessage, rule: QuickRule) -> bool:
@@ -726,52 +967,92 @@ class AutopilotEngine:
         rule: QuickRule,
         dry_run: bool,
         interactive: bool,
+        auto_create: bool = False,
     ) -> ProcessResult:
-        """Execute a matched quick rule."""
-        action_name = rule.action
-        # Track target folder for move/archive actions
+        """Execute a matched quick rule (supports multiple actions)."""
+        actions = rule.get_actions()
+        action_names = "+".join(actions)
+
+        # Track target folder for move/archive actions (first one wins for display)
         result_folder: str | None = None
-        if rule.action == "move":
-            result_folder = rule.folder
-        elif rule.action == "archive":
-            result_folder = "Archive"
+        for act in actions:
+            if act == "move" and rule.folder:
+                result_folder = rule.folder
+                break
+            elif act == "archive":
+                result_folder = "Archive"
+                break
 
         if dry_run:
             return ProcessResult(
                 message_id=email.id,
                 success=True,
-                action=f"[dry-run] {action_name}",
+                action=f"[dry-run] {action_names}",
                 target_folder=result_folder,
                 reason=f"Rule: {rule.name}",
                 rule_matched=rule.name,
             )
 
-        target_account = self.config.main_account or email.account
+        # Determine target account - check if folder is local first
+        if rule.folder and self._is_local_folder(rule.folder):
+            target_account = LOCAL_ACCOUNT_KEY  # Route to local "On My Mac"
+        elif "archive" in actions and self._is_local_folder("Archive"):
+            target_account = LOCAL_ACCOUNT_KEY  # Archive locally
+        else:
+            target_account = self.config.main_account or email.account
 
         try:
-            match rule.action:
-                case "delete":
-                    delete_message(
-                        email.id,
-                        permanent=False,
-                        source_mailbox=email.mailbox,
-                        source_account=email.account,
-                    )
+            # Execute each action in order
+            for act in actions:
+                match act:
+                    case "delete":
+                        delete_message(
+                            email.id,
+                            permanent=False,
+                            source_mailbox=email.mailbox,
+                            source_account=email.account,
+                        )
 
-                case "move":
-                    if rule.folder:
-                        # Check folder exists (reuse existing logic)
+                    case "move":
+                        if rule.folder:
+                            # Check folder exists (reuse existing logic)
+                            result = self._resolve_folder(
+                                rule.folder,
+                                target_account,
+                                email,
+                                AutopilotDecision(
+                                    action=EmailAction.MOVE,
+                                    confidence=1.0,
+                                    reasoning=f"Quick rule: {rule.name}",
+                                    target_folder=rule.folder,
+                                ),
+                                interactive,
+                                auto_create,
+                            )
+                            if result is not None:
+                                result.rule_matched = rule.name
+                                return result
+
+                            move_message(
+                                email.id,
+                                rule.folder,
+                                target_account,
+                                source_mailbox=email.mailbox,
+                                source_account=email.account,
+                            )
+
+                    case "archive":
                         result = self._resolve_folder(
-                            rule.folder,
+                            "Archive",
                             target_account,
                             email,
                             AutopilotDecision(
-                                action=EmailAction.MOVE,
+                                action=EmailAction.ARCHIVE,
                                 confidence=1.0,
                                 reasoning=f"Quick rule: {rule.name}",
-                                target_folder=rule.folder,
                             ),
                             interactive,
+                            auto_create,
                         )
                         if result is not None:
                             result.rule_matched = rule.name
@@ -779,69 +1060,49 @@ class AutopilotEngine:
 
                         move_message(
                             email.id,
-                            rule.folder,
+                            "Archive",
                             target_account,
                             source_mailbox=email.mailbox,
                             source_account=email.account,
                         )
 
-                case "archive":
-                    result = self._resolve_folder(
-                        "Archive",
-                        target_account,
-                        email,
-                        AutopilotDecision(
-                            action=EmailAction.ARCHIVE,
-                            confidence=1.0,
-                            reasoning=f"Quick rule: {rule.name}",
-                        ),
-                        interactive,
-                    )
-                    if result is not None:
-                        result.rule_matched = rule.name
-                        return result
+                    case "mark_read":
+                        mark_as_read(
+                            email.id,
+                            read=True,
+                            source_mailbox=email.mailbox,
+                            source_account=email.account,
+                        )
 
-                    move_message(
-                        email.id,
-                        "Archive",
-                        target_account,
-                        source_mailbox=email.mailbox,
-                        source_account=email.account,
-                    )
-
-                case "mark_read":
-                    mark_as_read(
-                        email.id,
-                        read=True,
-                        source_mailbox=email.mailbox,
-                        source_account=email.account,
-                    )
-
-                case "ignore":
-                    pass  # Do nothing, but don't pass to AI
+                    case "ignore":
+                        pass  # Do nothing, but don't pass to AI
 
             # Mark as processed
             self.db.mark_processed(
                 message_id=email.id,
                 mailbox=email.mailbox,
                 account=email.account,
-                subject=email.subject[:100],
-                sender=email.sender[:100],
-                action={"rule": rule.name, "action": rule.action},
+                subject=(email.subject or "")[:100],
+                sender=(email.sender or "")[:100],
+                action={"rule": rule.name, "actions": actions},
                 confidence=1.0,
             )
 
             self.db.log_action(
                 message_id=email.id,
-                action=rule.action,
+                action=action_names,
                 source=f"rule:{rule.name}",
-                details={"rule_name": rule.name, "folder": rule.folder},
+                details={"rule_name": rule.name, "actions": actions, "folder": rule.folder},
             )
+
+            # Remove from first-seen tracking if email was moved out of inbox
+            if "ignore" not in actions:
+                self.db.remove_first_seen(email.id)
 
             return ProcessResult(
                 message_id=email.id,
                 success=True,
-                action=action_name,
+                action=action_names,
                 target_folder=result_folder,
                 reason=f"Rule: {rule.name}",
                 rule_matched=rule.name,
@@ -855,38 +1116,240 @@ class AutopilotEngine:
                 rule_matched=rule.name,
             )
 
-    def _print_result(self, email: EmailMessage, result: ProcessResult) -> None:
-        """Print processing result for verbose mode."""
+    def _print_result(self, email: EmailMessage, result: ProcessResult, verbose: int) -> None:
+        """Print processing result based on verbosity level."""
+        if verbose == 1:
+            self._print_result_compact(email, result)
+        elif verbose == 2:
+            self._print_result_detailed(email, result)
+        elif verbose >= 3:
+            self._print_result_debug(email, result)
+
+    def _format_action(self, result: ProcessResult) -> str:
+        """Format action with optional folder: 'MOVE (Marketing)' or just 'ARCHIVE'."""
+        if not result.action:
+            return "UNKNOWN"
+        action_upper = result.action.upper()
+        if result.target_folder:
+            return f"{action_upper} ({result.target_folder})"
+        return action_upper
+
+    def _print_result_compact(self, email: EmailMessage, result: ProcessResult) -> None:
+        """Print compact one-liner for -v mode."""
+        # Build prefix: [RULE] if matched, empty otherwise
+        prefix = "[cyan][RULE][/cyan] " if result.rule_matched else ""
+
+        # Truncate subject for second line
         subject_short = email.subject[:50] + "..." if len(email.subject) > 50 else email.subject
 
-        # Determine source prefix: [RULE] or nothing (AI-classified)
-        source_prefix = "[cyan][RULE][/cyan] " if result.rule_matched else ""
+        if result.skipped:
+            console.print(f"  {prefix}[dim]SKIP[/dim] {email.sender}")
+            console.print(f"    {subject_short}")
+        elif result.queued:
+            console.print(f"  {prefix}[yellow]QUEUE[/yellow] {email.sender}")
+            console.print(f"    {subject_short}")
+        elif result.success:
+            console.print(f"  {prefix}[green]{self._format_action(result)}[/green] {email.sender}")
+            console.print(f"    {subject_short}")
+        else:
+            console.print(f"  {prefix}[red]ERROR[/red] {email.sender}")
+            console.print(f"    {subject_short}")
 
-        # Format action with optional folder: "MOVE (Marketing)" or just "ARCHIVE"
-        def format_action(action: str | None) -> str:
-            if not action:
-                return "UNKNOWN"
-            action_upper = action.upper()
-            if result.target_folder:
-                return f"{action_upper} ({result.target_folder})"
-            return action_upper
+    def _print_result_detailed(self, email: EmailMessage, result: ProcessResult) -> None:
+        """Print detailed output for -vv mode (includes reason/error)."""
+        prefix = "[cyan][RULE][/cyan] " if result.rule_matched else ""
+        subject_short = email.subject[:50] + "..." if len(email.subject) > 50 else email.subject
 
         if result.skipped:
-            console.print(f"  {source_prefix}[dim]SKIP[/dim] {subject_short}")
+            console.print(f"  {prefix}[dim]SKIP[/dim] {email.sender}")
+            console.print(f"    {subject_short}")
             if result.reason:
                 console.print(f"        [dim]{result.reason}[/dim]")
         elif result.queued:
-            console.print(f"  {source_prefix}[yellow]QUEUE[/yellow] {subject_short}")
+            console.print(f"  {prefix}[yellow]QUEUE[/yellow] {email.sender}")
+            console.print(f"    {subject_short}")
             if result.reason:
                 console.print(f"        [dim]{result.reason}[/dim]")
         elif result.success:
-            console.print(f"  {source_prefix}[green]{format_action(result.action)}[/green] {subject_short}")
+            console.print(f"  {prefix}[green]{self._format_action(result)}[/green] {email.sender}")
+            console.print(f"    {subject_short}")
             if result.reason:
                 console.print(f"        [dim]{result.reason}[/dim]")
         else:
-            console.print(f"  {source_prefix}[red]ERROR[/red] {subject_short}")
+            console.print(f"  {prefix}[red]ERROR[/red] {email.sender}")
+            console.print(f"    {subject_short}")
             if result.error:
                 console.print(f"        [red]{result.error}[/red]")
+
+    def _print_result_debug(self, email: EmailMessage, result: ProcessResult) -> None:
+        """Print debug output for -vvv mode (includes all metadata)."""
+        prefix = "[cyan][RULE][/cyan] " if result.rule_matched else ""
+        subject_short = email.subject[:50] + "..." if len(email.subject) > 50 else email.subject
+
+        if result.skipped:
+            console.print(f"  {prefix}[dim]SKIP[/dim] {email.sender}")
+        elif result.queued:
+            console.print(f"  {prefix}[yellow]QUEUE[/yellow] {email.sender}")
+        elif result.success:
+            console.print(f"  {prefix}[green]{self._format_action(result)}[/green] {email.sender}")
+        else:
+            console.print(f"  {prefix}[red]ERROR[/red] {email.sender}")
+
+        console.print(f"    {subject_short}")
+
+        # Show reason or error
+        if result.reason:
+            console.print(f"        [dim]{result.reason}[/dim]")
+        if result.error:
+            console.print(f"        [red]{result.error}[/red]")
+
+        # Debug metadata
+        console.print(f"        [dim]ID: {email.id[:12]}...[/dim]")
+        console.print(f"        [dim]Account: {email.account} / {email.mailbox}[/dim]")
+        if email.date_received:
+            console.print(f"        [dim]Date: {email.date_received.strftime('%Y-%m-%d %H:%M')}[/dim]")
+        if result.rule_matched:
+            console.print(f"        [dim]Matched rule: {result.rule_matched}[/dim]")
+
+    # ─── Inbox Aging ─────────────────────────────────────────────────────
+
+    async def _run_aging_checks(
+        self,
+        dry_run: bool,
+        verbose: int,
+    ) -> AgingResult:
+        """Run inbox aging checks: move stale emails, delete expired reviews."""
+        from email_nurse.mail.messages import get_message_by_id
+
+        result = AgingResult()
+        target_account = self.config.main_account or ""
+
+        if verbose >= 1:
+            console.print("\n[bold]Checking inbox aging...[/bold]")
+
+        # Phase 1: Move stale INBOX emails to Needs Review
+        stale_emails = self.db.get_stale_inbox_emails(self.config.inbox_stale_days)
+
+        for email_info in stale_emails:
+            try:
+                # Fetch the email to verify it still exists in INBOX
+                email = get_message_by_id(email_info["message_id"])
+                if not email:
+                    # Email no longer exists, clean up tracking
+                    self.db.remove_first_seen(email_info["message_id"])
+                    continue
+
+                # Check if still in INBOX (might have been moved by user)
+                if email.mailbox.upper() != "INBOX":
+                    self.db.remove_first_seen(email_info["message_id"])
+                    continue
+
+                if dry_run:
+                    if verbose >= 1:
+                        subject_short = email.subject[:40] + "..." if len(email.subject) > 40 else email.subject
+                        console.print(f"  [dim][AGING][/dim] [yellow]→ {self.config.needs_review_folder}[/yellow] {subject_short}")
+                    result.moved_to_review += 1
+                    continue
+
+                # Ensure Needs Review folder exists
+                if self.config.needs_review_folder.lower() not in [m.lower() for m in self.mailbox_cache]:
+                    try:
+                        create_mailbox(self.config.needs_review_folder, target_account)
+                        self.mailbox_cache.append(self.config.needs_review_folder)
+                        # Clear disk cache so it refetches all mailboxes next run
+                        self.db.clear_mailbox_cache(target_account)
+                    except Exception as e:
+                        if verbose >= 1:
+                            console.print(f"  [red]Failed to create {self.config.needs_review_folder}:[/red] {e}")
+                        result.errors += 1
+                        continue
+
+                # Move to Needs Review
+                move_message(
+                    email.id,
+                    self.config.needs_review_folder,
+                    target_account,
+                    source_mailbox=email.mailbox,
+                    source_account=email.account,
+                )
+
+                # Update tracking - email is now in Needs Review, remove from first-seen
+                self.db.remove_first_seen(email.id)
+
+                # Log the action
+                self.db.log_action(
+                    message_id=email.id,
+                    action="aging_move",
+                    source="aging",
+                    details={"target_folder": self.config.needs_review_folder},
+                )
+
+                result.moved_to_review += 1
+
+                if verbose >= 1:
+                    subject_short = email.subject[:40] + "..." if len(email.subject) > 40 else email.subject
+                    console.print(f"  [dim][AGING][/dim] [yellow]MOVE ({self.config.needs_review_folder})[/yellow] {subject_short}")
+
+            except Exception as e:
+                if verbose >= 1:
+                    console.print(f"  [red]Aging error:[/red] {e}")
+                result.errors += 1
+
+        # Phase 2: Delete emails that have been in Needs Review too long
+        # We need to check emails in the Needs Review folder directly
+        try:
+            needs_review_emails = get_messages(
+                mailbox=self.config.needs_review_folder,
+                account=target_account,
+                limit=100,
+                unread_only=False,
+            )
+
+            cutoff = datetime.now() - timedelta(days=self.config.needs_review_retention_days)
+
+            for email in needs_review_emails:
+                if email.date_received and email.date_received < cutoff:
+                    try:
+                        if dry_run:
+                            if verbose >= 1:
+                                subject_short = email.subject[:40] + "..." if len(email.subject) > 40 else email.subject
+                                console.print(f"  [dim][AGING][/dim] [red]DELETE[/red] {subject_short}")
+                            result.deleted_from_review += 1
+                            continue
+
+                        delete_message(
+                            email.id,
+                            permanent=False,  # Soft delete to Trash
+                            source_mailbox=self.config.needs_review_folder,
+                            source_account=target_account,
+                        )
+
+                        self.db.log_action(
+                            message_id=email.id,
+                            action="aging_delete",
+                            source="aging",
+                            details={"from_folder": self.config.needs_review_folder},
+                        )
+
+                        result.deleted_from_review += 1
+
+                        if verbose >= 1:
+                            subject_short = email.subject[:40] + "..." if len(email.subject) > 40 else email.subject
+                            console.print(f"  [dim][AGING][/dim] [red]DELETE[/red] {subject_short}")
+
+                    except Exception as e:
+                        if verbose >= 1:
+                            console.print(f"  [red]Aging delete error:[/red] {e}")
+                        result.errors += 1
+
+        except Exception:
+            # Needs Review folder might not exist yet, that's fine
+            pass
+
+        if verbose >= 1 and (result.moved_to_review > 0 or result.deleted_from_review > 0):
+            console.print(f"  Aging: {result.moved_to_review} moved, {result.deleted_from_review} deleted")
+
+        return result
 
     async def execute_pending_action(self, action_id: int) -> ProcessResult:
         """Execute a pending action that was queued for approval."""

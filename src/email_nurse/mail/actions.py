@@ -4,6 +4,10 @@ from difflib import SequenceMatcher
 
 from email_nurse.mail.applescript import escape_applescript_string, run_applescript
 
+# ASCII control character for parsing AppleScript output
+# Virtually never found in mailbox names, preventing parse errors
+RECORD_SEP = "\x1e"  # ASCII 30 - Record Separator
+
 # Virtual Gmail mailboxes that can't be referenced directly in AppleScript
 VIRTUAL_MAILBOXES = {
     "All Mail",
@@ -11,6 +15,10 @@ VIRTUAL_MAILBOXES = {
     "Important",
     "Starred",
 }
+
+# Sentinel value to indicate local "On My Mac" mailbox routing
+# When passed as target_account, the move will use no account qualifier
+LOCAL_ACCOUNT_KEY = "__local__"
 
 
 def get_all_mailboxes(account: str) -> list[str]:
@@ -28,15 +36,16 @@ def get_all_mailboxes(account: str) -> list[str]:
     tell application "Mail"
         set output to ""
         set acct to account "{account_escaped}"
+        set RS to (ASCII character 30)  -- Record Separator
         repeat with mbox in mailboxes of acct
-            if output is not "" then set output to output & "|||"
+            if output is not "" then set output to output & RS
             set output to output & name of mbox
         end repeat
         return output
     end tell
     '''
     result = run_applescript(script)
-    return result.split("|||") if result else []
+    return result.split(RECORD_SEP) if result else []
 
 
 def find_similar_mailbox(target: str, existing: list[str], threshold: float = 0.6) -> str | None:
@@ -92,6 +101,53 @@ def create_mailbox(mailbox: str, account: str) -> bool:
     return True
 
 
+def get_local_mailboxes() -> list[str]:
+    """
+    Get all local 'On My Mac' mailbox names.
+
+    Returns:
+        List of local mailbox names.
+    """
+    script = '''
+    tell application "Mail"
+        set output to ""
+        set RS to (ASCII character 30)  -- Record Separator
+        repeat with mbox in mailboxes
+            if account of mbox is missing value then
+                if output is not "" then set output to output & RS
+                set output to output & name of mbox
+            end if
+        end repeat
+        return output
+    end tell
+    '''
+    result = run_applescript(script)
+    # Handle empty string case - don't return [''] for empty results
+    if not result or not result.strip():
+        return []
+    return result.split(RECORD_SEP)
+
+
+def create_local_mailbox(mailbox: str) -> bool:
+    """
+    Create a new local 'On My Mac' mailbox.
+
+    Args:
+        mailbox: Name of the mailbox to create.
+
+    Returns:
+        True if successful.
+    """
+    mailbox_escaped = escape_applescript_string(mailbox)
+    script = f'''
+    tell application "Mail"
+        make new mailbox with properties {{name:"{mailbox_escaped}"}}
+    end tell
+    '''
+    run_applescript(script)
+    return True
+
+
 def _get_message_ref(message_id: str, source_mailbox: str | None, source_account: str | None) -> str:
     """Build AppleScript to reference a message efficiently."""
     if source_mailbox and source_account:
@@ -130,7 +186,10 @@ def move_message(
     msg_ref = _get_message_ref(message_id, source_mailbox, source_account)
 
     # Determine which account to use for the target mailbox
-    if target_account:
+    # LOCAL_ACCOUNT_KEY ("__local__") means route to local "On My Mac" mailboxes
+    if target_account == LOCAL_ACCOUNT_KEY:
+        account_escaped = None  # Local folder - no account qualifier
+    elif target_account:
         account_escaped = escape_applescript_string(target_account)
     elif source_account:
         account_escaped = escape_applescript_string(source_account)
@@ -395,9 +454,10 @@ def get_mailboxes(account_name: str | None = None) -> list[str]:
         script = f'''
         tell application "Mail"
             set output to ""
+            set RS to (ASCII character 30)  -- Record Separator
             set mboxes to mailboxes of account "{account_escaped}"
             repeat with mbox in mboxes
-                if output is not "" then set output to output & "|||"
+                if output is not "" then set output to output & RS
                 set output to output & name of mbox
             end repeat
             return output
@@ -407,10 +467,11 @@ def get_mailboxes(account_name: str | None = None) -> list[str]:
         script = '''
         tell application "Mail"
             set output to ""
+            set RS to (ASCII character 30)  -- Record Separator
             repeat with acct in accounts
                 set mboxes to mailboxes of acct
                 repeat with mbox in mboxes
-                    if output is not "" then set output to output & "|||"
+                    if output is not "" then set output to output & RS
                     set output to output & name of mbox & " (" & name of acct & ")"
                 end repeat
             end repeat
@@ -419,4 +480,4 @@ def get_mailboxes(account_name: str | None = None) -> list[str]:
         '''
 
     result = run_applescript(script)
-    return result.split("|||") if result else []
+    return result.split(RECORD_SEP) if result else []

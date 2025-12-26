@@ -1,77 +1,33 @@
-"""AppleScript execution wrapper for Mail.app integration."""
+"""AppleScript execution wrapper for Mail.app integration.
 
-import subprocess
-from typing import Any
+This module re-exports from the shared applescript package for backward
+compatibility, while providing Mail-specific error classes.
+"""
 
+from email_nurse.applescript.base import (
+    escape_applescript_string,
+    run_applescript,
+    run_applescript_json,
+)
+from email_nurse.applescript.errors import AppleScriptError, AppNotRunningError
 
-class MailAppError(Exception):
-    """Raised when an AppleScript command fails."""
-
-    def __init__(self, message: str, script: str | None = None) -> None:
-        super().__init__(message)
-        self.script = script
-
-
-def run_applescript(script: str, *, timeout: int = 30) -> str:
-    """
-    Execute an AppleScript and return the output.
-
-    Args:
-        script: The AppleScript code to execute.
-        timeout: Maximum seconds to wait for execution.
-
-    Returns:
-        The stdout from the AppleScript execution.
-
-    Raises:
-        MailAppError: If the script fails to execute.
-    """
-    try:
-        result = subprocess.run(
-            ["osascript", "-e", script],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-    except subprocess.TimeoutExpired as e:
-        raise MailAppError(f"AppleScript timed out after {timeout}s", script) from e
-
-    if result.returncode != 0:
-        error_msg = result.stderr.strip() or "Unknown AppleScript error"
-        raise MailAppError(error_msg, script)
-
-    return result.stdout.strip()
+__all__ = [
+    "run_applescript",
+    "run_applescript_json",
+    "escape_applescript_string",
+    "MailAppError",
+    "MailAppNotRunningError",
+]
 
 
-def run_applescript_json(script: str, *, timeout: int = 30) -> Any:
-    """
-    Execute an AppleScript that returns JSON and parse it.
+class MailAppError(AppleScriptError):
+    """Raised when a Mail.app AppleScript command fails."""
 
-    The script should return a JSON-formatted string.
-
-    Args:
-        script: The AppleScript code to execute.
-        timeout: Maximum seconds to wait for execution.
-
-    Returns:
-        Parsed JSON data from the script output.
-
-    Raises:
-        MailAppError: If the script fails or output isn't valid JSON.
-    """
-    import json
-
-    output = run_applescript(script, timeout=timeout)
-
-    if not output:
-        return None
-
-    try:
-        return json.loads(output)
-    except json.JSONDecodeError as e:
-        raise MailAppError(f"Invalid JSON output: {e}", script) from e
+    pass
 
 
-def escape_applescript_string(value: str) -> str:
-    """Escape a string for safe inclusion in AppleScript."""
-    return value.replace("\\", "\\\\").replace('"', '\\"')
+class MailAppNotRunningError(AppNotRunningError):
+    """Raised when Mail.app is not running."""
+
+    def __init__(self) -> None:
+        super().__init__("Mail.app")
