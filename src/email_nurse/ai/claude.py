@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from email_nurse.ai.base import AIProvider, EmailAction, EmailClassification
 
 if TYPE_CHECKING:
+    from email_nurse.autopilot.config import QuickRule
     from email_nurse.autopilot.models import AutopilotDecision
     from email_nurse.mail.messages import EmailMessage
 
@@ -35,6 +36,40 @@ Respond with a JSON object containing:
 - reasoning: Brief explanation of your decision
 
 Consider the sender, subject, content, and any provided context/rules."""
+
+
+QUICK_RULE_SYSTEM_PROMPT = """You parse natural language descriptions into email quick rules.
+
+Output ONLY valid JSON matching this exact schema:
+{
+  "name": "Rule Name",
+  "match": {
+    "sender_contains": ["pattern"],
+    "subject_contains": ["pattern"],
+    "sender_domain": ["domain.com"]
+  },
+  "action": "move",
+  "folder": "FolderName"
+}
+
+Rules for generating the JSON:
+- "name": Generate a concise descriptive name (2-5 words)
+- "match": Include ONLY the relevant condition(s):
+  - "sender_contains": For specific email addresses or partial matches (e.g., "bob@example.com")
+  - "sender_domain": For domain-wide rules (e.g., "github.com" for all @github.com emails)
+  - "subject_contains": For subject line patterns
+- "action": One of: "move", "delete", "archive", "mark_read", "ignore"
+- "folder": Required ONLY if action is "move"
+- For multiple actions, use "actions": ["mark_read", "delete"] instead of "action"
+
+Infer action from verbs:
+- "trash", "delete", "remove" → "delete"
+- "move", "put", "send to", "goes to" → "move"
+- "ignore", "skip", "leave alone" → "ignore"
+- "archive" → "archive"
+- "mark read" → "mark_read"
+
+Output ONLY the JSON object, no explanation or markdown."""
 
 
 AUTOPILOT_SYSTEM_PROMPT = """You are an intelligent email assistant operating in autopilot mode. Your task is to process emails according to the user's natural language instructions and decide on the appropriate action.
@@ -235,6 +270,55 @@ Based on the user's instructions above, decide what action to take for this emai
                 confidence=0.0,
                 reasoning=f"Failed to parse AI response: {e}",
             )
+
+    async def parse_quick_rule(
+        self,
+        description: str,
+        rule_name: str | None = None,
+    ) -> "QuickRule":
+        """
+        Parse a natural language description into a QuickRule.
+
+        Uses claude-haiku for fast, cheap parsing of simple rule descriptions.
+
+        Args:
+            description: Natural language description of the rule.
+            rule_name: Optional explicit name for the rule.
+
+        Returns:
+            QuickRule with parsed match conditions and action.
+
+        Raises:
+            ValueError: If the AI response cannot be parsed into a valid rule.
+        """
+        from email_nurse.autopilot.config import QuickRule
+
+        # Use Haiku for this simple task - fast and cheap
+        haiku_model = "claude-haiku-4-5-20251001"
+
+        user_prompt = description
+        if rule_name:
+            user_prompt = f'Rule name: "{rule_name}"\nDescription: {description}'
+
+        message = self.client.messages.create(
+            model=haiku_model,
+            max_tokens=500,
+            system=QUICK_RULE_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": user_prompt}],
+        )
+
+        response_text = message.content[0].text
+
+        try:
+            data = self._parse_json_response(response_text)
+
+            # Override name if explicitly provided
+            if rule_name:
+                data["name"] = rule_name
+
+            return QuickRule(**data)
+        except (json.JSONDecodeError, ValueError, KeyError) as e:
+            raise ValueError(f"Failed to parse quick rule: {e}\nRaw response: {response_text}")
 
     async def generate_reply(
         self,

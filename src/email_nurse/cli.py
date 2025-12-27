@@ -858,6 +858,180 @@ def autopilot_status() -> None:
     console.print(f"  Outbound threshold: {settings.outbound_confidence_threshold:.0%}")
 
 
+@autopilot_app.command("add-rule")
+def autopilot_add_rule(
+    description: Annotated[
+        str | None,
+        typer.Argument(help="Natural language rule description"),
+    ] = None,
+    name: Annotated[
+        str | None,
+        typer.Option("--name", "-n", help="Explicit name for the rule"),
+    ] = None,
+    yes: Annotated[
+        bool,
+        typer.Option("--yes", "-y", help="Skip confirmation prompt"),
+    ] = False,
+) -> None:
+    """Add a quick rule from natural language description.
+
+    Examples:
+        email-nurse autopilot add-rule "move anything from spam@example.com to Junk"
+        email-nurse autopilot add-rule "delete all emails from @sketchy.biz"
+        email-nurse autopilot add-rule "ignore newsletters with 'unsubscribe' in subject"
+        email-nurse autopilot add-rule "mark read and trash marketing from acme.com"
+
+    Run without arguments for interactive mode with full instructions.
+    """
+    from rich.panel import Panel
+
+    from email_nurse.ai.claude import ClaudeProvider
+    from email_nurse.autopilot.config import QuickRule
+
+    settings = get_settings()
+
+    # Interactive mode if no description provided
+    if description is None:
+        examples = """[cyan]Describe the rule you want to create in plain English.[/cyan]
+
+[dim]Examples:[/dim]
+  • "move emails from bob@example.com to Archive"
+  • "delete anything from @spam-domain.com"
+  • "ignore newsletters with 'unsubscribe' in subject"
+  • "mark read and trash marketing from acme.com\""""
+
+        console.print(Panel(examples, title="Quick Rule Generator", border_style="blue"))
+        console.print()
+
+        description = typer.prompt("Enter rule description")
+        if not description.strip():
+            console.print("[yellow]No description provided. Cancelled.[/yellow]")
+            raise typer.Exit(0)
+
+    # Initialize Claude provider for parsing
+    if not settings.anthropic_api_key:
+        console.print("[red]Error: ANTHROPIC_API_KEY not set.[/red]")
+        console.print("Set the environment variable or configure it in settings.")
+        raise typer.Exit(1)
+
+    ai = ClaudeProvider(api_key=settings.anthropic_api_key)
+
+    console.print("\n[dim]Parsing with AI...[/dim]")
+
+    # Parse the description into a QuickRule
+    async def parse_rule() -> QuickRule:
+        return await ai.parse_quick_rule(description, rule_name=name)
+
+    try:
+        rule = asyncio.run(parse_rule())
+    except ValueError as e:
+        console.print(f"[red]Failed to parse rule:[/red] {e}")
+        raise typer.Exit(1)
+
+    # Display the generated rule
+    console.print("\n[bold]Generated Rule:[/bold]")
+    rule_display = f"  [cyan]name:[/cyan] \"{rule.name}\"\n"
+    rule_display += "  [cyan]match:[/cyan]\n"
+    for key, patterns in rule.match.items():
+        rule_display += f"    {key}: {patterns}\n"
+    if rule.action:
+        rule_display += f"  [cyan]action:[/cyan] {rule.action}\n"
+    if rule.actions:
+        rule_display += f"  [cyan]actions:[/cyan] {rule.actions}\n"
+    if rule.folder:
+        rule_display += f"  [cyan]folder:[/cyan] {rule.folder}\n"
+    console.print(rule_display)
+
+    # Confirm unless --yes
+    if not yes:
+        if not typer.confirm("Add this rule?", default=True):
+            console.print("[yellow]Cancelled.[/yellow]")
+            raise typer.Exit(0)
+
+    # Append to config files
+    updated_files = []
+
+    # Production config
+    if settings.autopilot_config_path.exists():
+        try:
+            _append_quick_rule_to_config(settings.autopilot_config_path, rule)
+            updated_files.append(settings.autopilot_config_path)
+        except Exception as e:
+            console.print(f"[red]Failed to update production config:[/red] {e}")
+            raise typer.Exit(1)
+
+    # Repo config (deploy/config/autopilot.yaml)
+    repo_config = Path.cwd() / "deploy" / "config" / "autopilot.yaml"
+    if repo_config.exists() and repo_config != settings.autopilot_config_path:
+        try:
+            _append_quick_rule_to_config(repo_config, rule)
+            updated_files.append(repo_config)
+        except Exception as e:
+            console.print(f"[yellow]Warning: Failed to update repo config:[/yellow] {e}")
+
+    # Success message
+    for path in updated_files:
+        console.print(f"[green]✓ Rule added to[/green] {path}")
+
+
+def _append_quick_rule_to_config(config_path: Path, rule) -> None:
+    """Append a quick rule to autopilot.yaml preserving formatting.
+
+    This function carefully appends a new rule to the quick_rules section
+    of the YAML config file while preserving comments and existing formatting.
+    """
+    content = config_path.read_text()
+
+    # Build the rule YAML manually to control formatting
+    rule_lines = [f"\n  # {rule.name}"]
+    rule_lines.append(f'  - name: "{rule.name}"')
+    rule_lines.append("    match:")
+
+    for key, patterns in rule.match.items():
+        if len(patterns) == 1:
+            rule_lines.append(f'      {key}: ["{patterns[0]}"]')
+        else:
+            pattern_str = ", ".join(f'"{p}"' for p in patterns)
+            rule_lines.append(f"      {key}: [{pattern_str}]")
+
+    if rule.actions:
+        actions_str = ", ".join(rule.actions)
+        rule_lines.append(f"    actions: [{actions_str}]")
+    elif rule.action:
+        rule_lines.append(f"    action: {rule.action}")
+
+    if rule.folder:
+        rule_lines.append(f"    folder: {rule.folder}")
+
+    rule_yaml = "\n".join(rule_lines)
+
+    # Find where to insert - after the last rule or at end of quick_rules section
+    if "quick_rules:" in content:
+        # Append to existing quick_rules section
+        # Find the end of the file or next top-level section
+        lines = content.split("\n")
+        insert_index = len(lines)
+
+        in_quick_rules = False
+        for i, line in enumerate(lines):
+            if line.strip().startswith("quick_rules:"):
+                in_quick_rules = True
+                continue
+            if in_quick_rules and line and not line.startswith(" ") and not line.startswith("#"):
+                # Found next top-level section
+                insert_index = i
+                break
+
+        # Insert before the next section (or at end)
+        lines.insert(insert_index, rule_yaml)
+        content = "\n".join(lines)
+    else:
+        # No quick_rules section exists - add one
+        content += "\n\nquick_rules:" + rule_yaml
+
+    config_path.write_text(content)
+
+
 @autopilot_app.command("reset")
 def autopilot_reset(
     older_than: int = typer.Option(
