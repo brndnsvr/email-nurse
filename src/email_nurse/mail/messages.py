@@ -63,15 +63,22 @@ def get_messages(
 
     read_filter = "whose read status is false" if unread_only else ""
 
+    # Use lazy iteration with early exit to avoid timeout on large mailboxes.
+    # The previous approach (set msgList to all messages, then limit) timed out
+    # because AppleScript enumerated all messages upfront. This approach iterates
+    # lazily and exits after 'limit' messages are processed.
     script = f'''
     tell application "Mail"
         set output to ""
-        set msgList to (messages of {mailbox_ref} {read_filter})
-        set msgCount to count of msgList
-        if msgCount > {limit} then set msgCount to {limit}
+        set RS to (ASCII character 30)  -- Record Separator
+        set US to (ASCII character 31)  -- Unit Separator
+        set i to 0
 
-        repeat with i from 1 to msgCount
-            set msg to item i of msgList
+        repeat with msg in (messages of {mailbox_ref} {read_filter})
+            -- Early exit after limit reached (avoids full enumeration)
+            set i to i + 1
+            if i > {limit} then exit repeat
+
             set msgId to id of msg as string
             set msgMessageId to message id of msg
             set msgSubject to subject of msg
@@ -98,10 +105,7 @@ def get_messages(
                 end if
             end try
 
-            -- Build record with ASCII control chars (RS=30, US=31) as delimiters
-            -- These are virtually never found in email content, preventing parse errors
-            set RS to (ASCII character 30)  -- Record Separator
-            set US to (ASCII character 31)  -- Unit Separator
+            -- Build record with ASCII control chars as delimiters
             if output is not "" then set output to output & RS
             set output to output & msgId & US & msgMessageId & US & msgSubject & US & msgSender & US & recipList & US & msgDateReceived & US & msgDateSent & US & msgContent & US & msgRead & US & msgMailbox & US & msgAccount
         end repeat

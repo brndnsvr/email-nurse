@@ -65,7 +65,7 @@ All environment variables use the `EMAIL_NURSE_` prefix.
 | Variable | Type | Default | Description |
 |----------|------|---------|-------------|
 | `ANTHROPIC_API_KEY` | string | - | **Required**: Anthropic API key |
-| `EMAIL_NURSE_CLAUDE_MODEL` | string | `claude-sonnet-4-20250514` | Claude model to use |
+| `EMAIL_NURSE_CLAUDE_MODEL` | string | `claude-haiku-4-5-20251001` | Claude model to use |
 
 Get your API key from: https://console.anthropic.com/
 
@@ -361,9 +361,9 @@ export ANTHROPIC_API_KEY=sk-ant-xxxxx
 ```
 
 Available models:
-- `claude-sonnet-4-20250514` (default, best balance)
-- `claude-opus-4-20250514` (highest quality, slower)
-- `claude-haiku-3-20240307` (fastest, cheaper)
+- `claude-haiku-4-5-20251001` (default, fast and cost-effective)
+- `claude-sonnet-4-5-20250929` (best balance of quality/speed)
+- `claude-opus-4-5-20251101` (highest quality, slower)
 
 ### OpenAI
 

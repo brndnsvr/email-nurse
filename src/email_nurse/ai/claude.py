@@ -116,7 +116,7 @@ class ClaudeProvider(AIProvider):
     def __init__(
         self,
         api_key: str | None = None,
-        model: str = "claude-sonnet-4-20250514",
+        model: str = "claude-haiku-4-5-20251001",
     ) -> None:
         """
         Initialize the Claude provider.
