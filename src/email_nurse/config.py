@@ -30,7 +30,7 @@ class Settings(BaseSettings):
         default=None, description="Anthropic API key"
     )
     claude_model: str = Field(
-        default="claude-sonnet-4-20250514", description="Claude model to use"
+        default="claude-haiku-4-5-20251001", description="Claude model to use"
     )
 
     # OpenAI settings

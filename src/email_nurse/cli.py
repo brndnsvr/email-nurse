@@ -927,6 +927,16 @@ def autopilot_add_rule(
     except ValueError as e:
         console.print(f"[red]Failed to parse rule:[/red] {e}")
         raise typer.Exit(1)
+    except Exception as e:
+        # Catch API errors (authentication, rate limits, etc.)
+        error_msg = str(e)
+        if "401" in error_msg or "authentication" in error_msg.lower():
+            console.print("[red]Authentication failed.[/red]")
+            console.print("Please verify your ANTHROPIC_API_KEY is correct.")
+            console.print("Check: ~/.config/email-nurse/.env")
+        else:
+            console.print(f"[red]API error:[/red] {e}")
+        raise typer.Exit(1)
 
     # Display the generated rule
     console.print("\n[bold]Generated Rule:[/bold]")

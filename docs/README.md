@@ -13,6 +13,14 @@ Email Nurse is an AI-powered email automation tool for macOS Mail.app that intel
 | [Configuration Guide](./configuration.md) | System setup, environment variables, and file locations | All users |
 | [Rules Reference](./rules-reference.md) | Complete `rules.yaml` schema and examples | Rule authors |
 | [Templates Reference](./templates-reference.md) | Complete `templates.yaml` schema and examples | Template authors |
+| [Troubleshooting Guide](./troubleshooting.md) | Common issues, error messages, and solutions | All users |
+
+### Developer Documentation
+
+| Document | Description | Audience |
+|----------|-------------|----------|
+| [Architecture Guide](./architecture.md) | System design, modules, data flow | Developers |
+| [AI Providers Guide](./ai-providers.md) | Provider configuration, model selection, extending | Developers |
 
 ## Quick Start
 
