@@ -207,6 +207,30 @@ cat ~/.config/email-nurse/autopilot.yaml
    osascript -e 'tell application "Mail" to get name of every account'
    ```
 
+### Large Mailbox Timeouts
+
+**Symptoms:**
+- "AppleScript timed out after 180s" warnings
+- Emails not being processed from accounts with large Inboxes (1000+ messages)
+- Some accounts work fine, others fail
+
+**Cause:**
+Large mailboxes (e.g., Exchange accounts with 1000+ messages) can timeout during fetch because AppleScript must enumerate all messages.
+
+**Solutions:**
+
+1. **Archive old emails:**
+   Reduce Inbox size by archiving emails older than 30-90 days.
+
+2. **Process more frequently:**
+   Smaller batches per run means fewer messages to enumerate.
+
+3. **Enable `main_account` routing:**
+   Route all emails to a central account with proper folder structure:
+   ```yaml
+   main_account: iCloud
+   ```
+
 ### Folder Not Found
 
 **Symptoms:**
