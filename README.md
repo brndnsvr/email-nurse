@@ -11,6 +11,8 @@ AI-powered email management and automation for macOS Mail.app.
 - **Multi-Level Verbosity**: `-v` compact, `-vv` detailed, `-vvv` debug output
 - **Inbox Aging**: Automatically move stale emails to review folder and clean up
 - **Multi-Account Support**: Process emails from multiple accounts to a central location
+- **Per-Account Folder Policies**: Configure auto-create for iCloud, queue-for-manual for Exchange
+- **Per-Account Logging**: Separate log files per email account with automatic rotation
 - **Reminders Integration**: View and manage macOS Reminders.app lists
 - **Flexible Actions**: Move, delete, archive, flag, reply, forward emails automatically
 

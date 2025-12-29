@@ -115,6 +115,30 @@ class AutopilotDatabase:
                     ON email_first_seen(first_seen_at);
             """)
 
+            # Migration: Add folder-pending columns to pending_actions
+            cursor = conn.execute("PRAGMA table_info(pending_actions)")
+            existing_columns = {row["name"] for row in cursor.fetchall()}
+
+            if "pending_folder" not in existing_columns:
+                conn.execute(
+                    "ALTER TABLE pending_actions ADD COLUMN pending_folder TEXT"
+                )
+            if "pending_account" not in existing_columns:
+                conn.execute(
+                    "ALTER TABLE pending_actions ADD COLUMN pending_account TEXT"
+                )
+            if "action_type" not in existing_columns:
+                conn.execute(
+                    "ALTER TABLE pending_actions ADD COLUMN action_type TEXT DEFAULT 'general'"
+                )
+
+            # Index for folder-pending queries
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_pending_folder
+                ON pending_actions(pending_folder, pending_account)
+                WHERE pending_folder IS NOT NULL
+            """)
+
     # ─── Processed Emails ─────────────────────────────────────────────────
 
     def is_processed(self, message_id: str) -> bool:
@@ -306,6 +330,199 @@ class AutopilotDatabase:
                 "SELECT COUNT(*) FROM pending_actions WHERE status = 'pending'"
             )
             return cursor.fetchone()[0]
+
+    # ─── Folder-Pending Actions ───────────────────────────────────────────
+
+    def add_pending_folder_action(
+        self,
+        message_id: str,
+        email_summary: str,
+        proposed_action: dict[str, Any],
+        confidence: float,
+        reasoning: str,
+        pending_folder: str,
+        pending_account: str,
+    ) -> int:
+        """Add an action that's waiting for a folder to be created.
+
+        Args:
+            message_id: Email message ID.
+            email_summary: Brief summary (sender: subject).
+            proposed_action: The action to execute once folder exists.
+            confidence: AI confidence score.
+            reasoning: Why this action was proposed.
+            pending_folder: Folder that needs to be created.
+            pending_account: Account where folder is needed.
+
+        Returns:
+            The pending action ID.
+        """
+        with self._connection() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO pending_actions
+                (message_id, email_summary, proposed_action, confidence, reasoning,
+                 created_at, status, pending_folder, pending_account, action_type)
+                VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, 'folder_pending')
+                """,
+                (
+                    message_id,
+                    email_summary,
+                    json.dumps(proposed_action),
+                    confidence,
+                    reasoning,
+                    datetime.now().isoformat(),
+                    pending_folder,
+                    pending_account,
+                ),
+            )
+            if cursor.lastrowid is None:
+                raise RuntimeError("Failed to insert pending folder action")
+            return cursor.lastrowid
+
+    def get_pending_folders(
+        self,
+        account: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Get list of folders that need to be created.
+
+        Args:
+            account: Filter by account, or None for all accounts.
+
+        Returns:
+            List of dicts with folder, account, message count, and first queued time.
+        """
+        query = """
+            SELECT pending_folder, pending_account,
+                   COUNT(*) as message_count,
+                   MIN(created_at) as first_queued
+            FROM pending_actions
+            WHERE status = 'pending'
+              AND pending_folder IS NOT NULL
+        """
+        params: list[Any] = []
+
+        if account:
+            query += " AND pending_account = ?"
+            params.append(account)
+
+        query += " GROUP BY pending_folder, pending_account ORDER BY first_queued"
+
+        with self._connection() as conn:
+            cursor = conn.execute(query, params)
+            return [
+                {
+                    "pending_folder": row["pending_folder"],
+                    "pending_account": row["pending_account"],
+                    "message_count": row["message_count"],
+                    "first_queued": row["first_queued"],
+                }
+                for row in cursor.fetchall()
+            ]
+
+    def get_actions_for_folder(
+        self,
+        folder: str,
+        account: str,
+    ) -> list[dict[str, Any]]:
+        """Get all pending actions waiting on a specific folder.
+
+        Args:
+            folder: Folder name that was pending.
+            account: Account the folder is on.
+
+        Returns:
+            List of pending action records.
+        """
+        with self._connection() as conn:
+            cursor = conn.execute(
+                """
+                SELECT id, message_id, email_summary, proposed_action,
+                       confidence, reasoning, created_at, status,
+                       pending_folder, pending_account
+                FROM pending_actions
+                WHERE status = 'pending'
+                  AND pending_folder = ?
+                  AND pending_account = ?
+                ORDER BY created_at
+                """,
+                (folder, account),
+            )
+            results = []
+            for row in cursor.fetchall():
+                results.append({
+                    "id": row["id"],
+                    "message_id": row["message_id"],
+                    "email_summary": row["email_summary"],
+                    "proposed_action": _safe_json_loads(row["proposed_action"], {}),
+                    "confidence": row["confidence"],
+                    "reasoning": row["reasoning"],
+                    "created_at": row["created_at"],
+                    "status": row["status"],
+                    "pending_folder": row["pending_folder"],
+                    "pending_account": row["pending_account"],
+                })
+            return results
+
+    def get_folder_pending_messages(
+        self,
+        folder: str,
+        account: str,
+        limit: int = 10,
+    ) -> list[dict[str, Any]]:
+        """Get sample messages waiting on a folder (for notifications).
+
+        Args:
+            folder: Folder name.
+            account: Account name.
+            limit: Maximum messages to return.
+
+        Returns:
+            List with sender, subject, date info for notifications.
+        """
+        with self._connection() as conn:
+            cursor = conn.execute(
+                """
+                SELECT email_summary, created_at
+                FROM pending_actions
+                WHERE status = 'pending'
+                  AND pending_folder = ?
+                  AND pending_account = ?
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (folder, account, limit),
+            )
+            results = []
+            for row in cursor.fetchall():
+                # Parse "sender: subject" format
+                summary = row["email_summary"]
+                if ": " in summary:
+                    sender, subject = summary.split(": ", 1)
+                else:
+                    sender, subject = summary, ""
+                results.append({
+                    "sender": sender,
+                    "subject": subject,
+                    "date": row["created_at"][:10],  # Just the date part
+                })
+            return results
+
+    def remove_pending_action(self, action_id: int) -> bool:
+        """Remove a pending action by ID (after it's been executed).
+
+        Args:
+            action_id: The database ID of the pending action.
+
+        Returns:
+            True if action was removed, False if not found.
+        """
+        with self._connection() as conn:
+            cursor = conn.execute(
+                "DELETE FROM pending_actions WHERE id = ?",
+                (action_id,),
+            )
+            return cursor.rowcount > 0
 
     # ─── Audit Log ────────────────────────────────────────────────────────
 

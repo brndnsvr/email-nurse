@@ -71,7 +71,17 @@ class Settings(BaseSettings):
 
     # Logging
     log_level: str = Field(default="INFO", description="Logging level")
-    log_file: Path | None = Field(default=None, description="Log file path")
+    log_file: Path | None = Field(default=None, description="Log file path (deprecated)")
+    log_dir: Path = Field(
+        default=Path.home() / "Library" / "Logs",
+        description="Directory for log files (per-account logs written here)",
+    )
+    log_rotation_size_mb: int = Field(
+        default=5, ge=1, description="Max size per log file in MB before rotation"
+    )
+    log_backup_count: int = Field(
+        default=3, ge=0, description="Number of rotated log files to keep"
+    )
 
     # Autopilot settings
     autopilot_enabled: bool = Field(

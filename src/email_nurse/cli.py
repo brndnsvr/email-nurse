@@ -395,9 +395,18 @@ def autopilot_run(
 ) -> None:
     """Run autopilot email processing."""
     from email_nurse.autopilot import AutopilotEngine, load_autopilot_config
+    from email_nurse.logging import setup_logging
     from email_nurse.storage.database import AutopilotDatabase
 
     settings = get_settings()
+
+    # Initialize per-account logging
+    setup_logging(
+        log_dir=settings.log_dir,
+        log_level=settings.log_level,
+        max_bytes=settings.log_rotation_size_mb * 1024 * 1024,
+        backup_count=settings.log_backup_count,
+    )
 
     # Use provider from settings if not specified
     provider = provider or settings.ai_provider
@@ -1114,6 +1123,125 @@ def autopilot_clear_cache(
         console.print(f"[green]✓ Cleared mailbox cache {target}.[/green]")
     else:
         console.print("[yellow]No cached mailboxes to clear.[/yellow]")
+
+
+@autopilot_app.command("pending-folders")
+def autopilot_pending_folders(
+    account: Annotated[
+        str | None,
+        typer.Option("--account", "-a", help="Filter by specific account"),
+    ] = None,
+) -> None:
+    """List folders that need manual creation.
+
+    Shows folders that couldn't be auto-created (e.g., on Exchange accounts)
+    along with the messages waiting to be moved to those folders.
+    """
+    from email_nurse.storage.database import AutopilotDatabase
+
+    settings = get_settings()
+
+    if not settings.database_path.exists():
+        console.print("[yellow]No database found.[/yellow]")
+        return
+
+    db = AutopilotDatabase(settings.database_path)
+    pending = db.get_pending_folders(account=account)
+
+    if not pending:
+        console.print("[green]✓ No folders pending creation.[/green]")
+        return
+
+    table = Table(title="Folders Pending Manual Creation")
+    table.add_column("Folder", style="cyan")
+    table.add_column("Account", style="yellow")
+    table.add_column("Messages", justify="right")
+    table.add_column("Waiting Since")
+
+    total_messages = 0
+    for item in pending:
+        table.add_row(
+            item["pending_folder"],
+            item["pending_account"],
+            str(item["message_count"]),
+            item["first_queued"][:10] if item["first_queued"] else "Unknown",
+        )
+        total_messages += item["message_count"]
+
+    console.print(table)
+    console.print(f"\n[bold]Total:[/bold] {len(pending)} folder(s), {total_messages} message(s) waiting")
+    console.print("\n[dim]Create folders manually, then run: email-nurse autopilot retry-pending[/dim]")
+
+
+@autopilot_app.command("retry-pending")
+def autopilot_retry_pending(
+    account: Annotated[
+        str | None,
+        typer.Option("--account", "-a", help="Only retry for specific account"),
+    ] = None,
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", "-n", help="Show what would happen without executing"),
+    ] = False,
+    verbose: Annotated[
+        int,
+        typer.Option("--verbose", "-v", count=True, help="Increase output verbosity"),
+    ] = 1,
+) -> None:
+    """Retry pending folder actions after creating folders.
+
+    Checks if any folders queued for creation now exist, and executes
+    the pending move actions for those folders.
+
+    Example workflow:
+        1. Autopilot queues messages for "Leadership" folder on Exchange
+        2. You create "Leadership" folder in Outlook Web
+        3. Run: email-nurse autopilot retry-pending
+        4. Messages are moved to the new folder
+    """
+    from email_nurse.ai.factory import create_ai_provider
+    from email_nurse.autopilot.config import load_autopilot_config
+    from email_nurse.autopilot.engine import AutopilotEngine
+    from email_nurse.logging import setup_logging
+    from email_nurse.storage.database import AutopilotDatabase
+
+    settings = get_settings()
+    setup_logging(settings)
+
+    if not settings.database_path.exists():
+        console.print("[yellow]No database found.[/yellow]")
+        raise typer.Exit(1)
+
+    # Load autopilot config
+    config = load_autopilot_config(settings.autopilot_config_path)
+    if not config:
+        console.print("[red]Error: No autopilot configuration found.[/red]")
+        console.print(f"Run 'email-nurse autopilot init' first.")
+        raise typer.Exit(1)
+
+    db = AutopilotDatabase(settings.database_path)
+
+    # Create AI provider (needed for engine, even though we won't classify)
+    ai_provider = create_ai_provider(settings)
+
+    engine = AutopilotEngine(
+        settings=settings,
+        ai_provider=ai_provider,
+        database=db,
+        config=config,
+    )
+
+    # Run retry
+    results = asyncio.run(
+        engine.retry_pending_folders(
+            account=account,
+            dry_run=dry_run,
+            verbose=verbose,
+        )
+    )
+
+    if results["errors"] > 0:
+        raise typer.Exit(1)
 
 
 # === Reminders Commands ===
