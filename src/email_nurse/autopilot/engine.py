@@ -361,9 +361,11 @@ class AutopilotEngine:
                     )
 
                 try:
-                    # Fetch extra to account for filtering, but cap at 100 to avoid timeout
-                    # (AppleScript is slow - ~1s per message with content)
-                    fetch_limit = min(limit * 3, 100)
+                    # Fetch extra to account for filtering out already-processed emails.
+                    # With lazy AppleScript iteration, we can safely fetch more messages
+                    # without timeout risk (only iterates up to limit, doesn't enumerate all).
+                    # Cap at 500 to handle large inboxes with many processed emails.
+                    fetch_limit = min(limit * 3, 500)
                     messages = get_messages(
                         mailbox=actual_mailbox,
                         account=account,

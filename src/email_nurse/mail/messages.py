@@ -114,7 +114,7 @@ def get_messages(
     end tell
     '''
 
-    result = run_applescript(script, timeout=180)  # 3 min timeout for large mailboxes
+    result = run_applescript(script, timeout=600)  # 10 min timeout for large mailboxes
     if not result:
         return []
 
