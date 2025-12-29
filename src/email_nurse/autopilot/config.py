@@ -9,6 +9,22 @@ from pydantic import BaseModel, Field, model_validator
 # Type alias for rule actions
 RuleAction = Literal["delete", "move", "archive", "mark_read", "ignore"]
 
+# Type alias for folder handling policies
+FolderPolicy = Literal["auto_create", "queue", "interactive"]
+
+
+class AccountSettings(BaseModel):
+    """Per-account settings for folder handling and notifications."""
+
+    folder_policy: FolderPolicy = Field(
+        default="queue",
+        description="How to handle missing folders: auto_create, queue, or interactive",
+    )
+    notify_on_pending: bool = Field(
+        default=True,
+        description="Show AppleScript notification when folders are queued for creation",
+    )
+
 
 class QuickRule(BaseModel):
     """A deterministic rule that runs before AI classification."""
@@ -110,6 +126,38 @@ class AutopilotConfig(BaseModel):
         ge=1,
         description="Days to retain processed email records before auto-cleanup",
     )
+
+    # Per-account settings
+    account_settings: dict[str, AccountSettings] = Field(
+        default_factory=dict,
+        description="Per-account settings for folder handling (keyed by account name)",
+    )
+
+    def get_folder_policy(self, account: str) -> FolderPolicy:
+        """Get folder policy for an account, with fallback to default 'queue'.
+
+        Args:
+            account: Account name to look up.
+
+        Returns:
+            The folder policy for this account.
+        """
+        if account in self.account_settings:
+            return self.account_settings[account].folder_policy
+        return "queue"  # Safe default - don't auto-create
+
+    def should_notify(self, account: str) -> bool:
+        """Check if account should receive AppleScript notifications.
+
+        Args:
+            account: Account name to look up.
+
+        Returns:
+            True if notifications should be shown for this account.
+        """
+        if account in self.account_settings:
+            return self.account_settings[account].notify_on_pending
+        return True  # Default to notifying
 
 
 def load_autopilot_config(path: Path) -> AutopilotConfig | None:

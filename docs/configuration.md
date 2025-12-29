@@ -207,6 +207,53 @@ needs_review_retention_days: 14
 
 # Database cleanup (days to keep processed email records)
 processed_retention_days: 90
+
+# Per-account folder handling policies (optional)
+account_settings:
+  iCloud:
+    folder_policy: auto_create    # auto-create folders via AppleScript
+    notify_on_pending: false
+  "Exchange Account":
+    folder_policy: queue          # queue for manual creation
+    notify_on_pending: true
+```
+
+#### Per-Account Folder Policies
+
+Different email providers have different capabilities for folder creation. Exchange servers often have issues with AppleScript folder creation, while iCloud works well. The `account_settings` section lets you configure per-account behavior:
+
+```yaml
+account_settings:
+  iCloud:
+    folder_policy: auto_create
+    notify_on_pending: false
+  "My Exchange":
+    folder_policy: queue
+    notify_on_pending: true
+```
+
+**Folder policies:**
+- `auto_create` - Create folders automatically via AppleScript (works well with iCloud)
+- `queue` - Queue messages for manual folder creation (recommended for Exchange)
+- `interactive` - Prompt user for each missing folder
+
+**Workflow for queue policy:**
+1. Autopilot detects a message needs folder "Projects/NewClient"
+2. Since Exchange uses `queue` policy, message is saved to pending queue
+3. At end of run, a macOS dialog shows folders needing creation
+4. You manually create the folder in Outlook Web or Exchange Admin
+5. Run `email-nurse autopilot retry-pending` to process queued messages
+
+**CLI commands for pending folders:**
+```bash
+# List folders waiting for manual creation
+email-nurse autopilot pending-folders
+
+# Retry pending actions after creating folders
+email-nurse autopilot retry-pending
+
+# Retry only for specific account
+email-nurse autopilot retry-pending --account "Exchange"
 ```
 
 #### Quick Rules
@@ -535,9 +582,30 @@ For scheduled/launchd runs, use the interactive log viewer:
 
 This provides a menu to tail the main log, error log, or both simultaneously. Press `Ctrl+C` while viewing to return to the menu.
 
-Log files location (when using launchd):
-- Main log: `~/Library/Logs/email-nurse.log`
-- Error log: `~/Library/Logs/email-nurse-error.log`
+#### Log File Locations
+
+Email Nurse uses per-account logging with automatic rotation:
+
+```
+~/Library/Logs/
+├── email-nurse-error.log      # All errors (from all accounts)
+├── email-nurse-iCloud.log     # Activity for iCloud account
+├── email-nurse-CSquare.log    # Activity for CSquare account
+└── email-nurse-{account}.log  # One log per account
+```
+
+**Log rotation:**
+- Each log file rotates at 10 MB (configurable)
+- Up to 5 backup files are kept (e.g., `email-nurse-iCloud.log.1`)
+- Errors from any account are duplicated to `email-nurse-error.log` with `[account]` prefix
+
+**Environment variables for logging:**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `EMAIL_NURSE_LOG_DIR` | `~/Library/Logs` | Directory for log files |
+| `EMAIL_NURSE_LOG_ROTATION_SIZE_MB` | `10` | Max log file size before rotation |
+| `EMAIL_NURSE_LOG_BACKUP_COUNT` | `5` | Number of rotated backups to keep |
 
 ### 5. Test with Specific Mailboxes
 

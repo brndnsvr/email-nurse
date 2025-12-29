@@ -7,6 +7,9 @@ from typing import TYPE_CHECKING
 
 from rich.console import Console
 
+from email_nurse.logging import get_account_logger, get_error_logger
+from email_nurse.applescript.notifications import notify_pending_folders
+
 from email_nurse.ai.base import EmailAction
 from email_nurse.autopilot.config import AutopilotConfig, QuickRule
 from email_nurse.autopilot.models import (
@@ -69,6 +72,8 @@ class AutopilotEngine:
         self.mailbox_cache: list[str] = []
         self._local_mailbox_cache: list[str] = []
         self._cache_loaded_for: str | None = None  # Track which account cache is loaded for
+        # Track folders queued for creation during this run (for notifications)
+        self._new_pending_folders: dict[tuple[str, str], list[dict]] = {}  # (folder, account) -> messages
 
     def _load_mailbox_cache(self, account: str | None = None) -> None:
         """Load mailbox names from disk cache or Mail.app.
@@ -240,6 +245,9 @@ class AutopilotEngine:
         started_at = datetime.now()
         batch_size = limit or self.settings.autopilot_batch_size
 
+        # Reset pending folder tracking for this run
+        self._new_pending_folders = {}
+
         # Load mailbox cache for folder checking
         self._load_mailbox_cache()
 
@@ -287,6 +295,8 @@ class AutopilotEngine:
 
             except Exception as e:
                 result.errors += 1
+                logger = get_account_logger(email.account)
+                logger.error(f"Error processing \"{email.subject[:40]}\": {e}")
                 if verbose >= 1:
                     console.print(f"[red]Error processing {email.subject[:40]}:[/red] {e}")
 
@@ -302,6 +312,10 @@ class AutopilotEngine:
                     f"[dim]Cleaned up {deleted} processed records "
                     f"older than {self.config.processed_retention_days} days[/dim]"
                 )
+
+        # Show notification for any new pending folders
+        if not dry_run and self._new_pending_folders:
+            self._notify_pending_folders(verbose)
 
         result.completed_at = datetime.now()
         return result
@@ -366,6 +380,8 @@ class AutopilotEngine:
                     # without timeout risk (only iterates up to limit, doesn't enumerate all).
                     # Cap at 500 to handle large inboxes with many processed emails.
                     fetch_limit = min(limit * 3, 500)
+                    logger = get_account_logger(account)
+                    logger.info(f"Fetching up to {fetch_limit} emails from {actual_mailbox}")
                     messages = get_messages(
                         mailbox=actual_mailbox,
                         account=account,
@@ -378,7 +394,10 @@ class AutopilotEngine:
                         if msg.mailbox in VIRTUAL_MAILBOXES or msg.mailbox.startswith("[Gmail]"):
                             msg.mailbox = actual_mailbox
                     all_emails.extend(messages)
+                    logger.info(f"Fetched {len(messages)} emails from {actual_mailbox}")
                 except Exception as e:
+                    logger = get_account_logger(account)
+                    logger.error(f"Failed to fetch from {actual_mailbox}: {e}")
                     console.print(
                         f"[yellow]Warning: Failed to fetch from {actual_mailbox}"
                         f"{f' ({account})' if account else ''}:[/yellow] {e}"
@@ -418,6 +437,10 @@ class AutopilotEngine:
         auto_create: bool = False,
     ) -> ProcessResult:
         """Process a single email through autopilot."""
+        logger = get_account_logger(email.account)
+        subject_short = email.subject[:60] if email.subject else "(no subject)"
+        logger.info(f"Processing: \"{subject_short}\" from {email.sender}")
+
         # Track first-seen for inbox aging (only if aging is enabled)
         if self.config.inbox_aging_enabled and not dry_run:
             self.db.track_first_seen(email.id, email.mailbox, email.account)
@@ -425,13 +448,23 @@ class AutopilotEngine:
         # Try quick rules first (instant, no API cost)
         quick_result = self._apply_quick_rules(email, dry_run, interactive, auto_create)
         if quick_result is not None:
+            if quick_result.rule_matched:
+                action_str = quick_result.action or "unknown"
+                folder_str = f" -> {quick_result.target_folder}" if quick_result.target_folder else ""
+                logger.info(f"Quick rule \"{quick_result.rule_matched}\": {action_str.upper()}{folder_str}")
             return quick_result
 
         # No quick rule matched - use AI
         try:
             decision = await self.ai.autopilot_classify(email, self.config.instructions)
+            folder_str = f" -> {decision.target_folder}" if decision.target_folder else ""
+            logger.info(
+                f"AI decision: {decision.action.value.upper()}{folder_str} "
+                f"(confidence: {decision.confidence:.0%})"
+            )
         except Exception as e:
             # Log the error so users can debug AI failures
+            logger.error(f"AI classification failed: {type(e).__name__}: {e}")
             print(
                 f"AI classification failed for {email.id}: {type(e).__name__}: {e}",
                 file=sys.stderr,
@@ -603,14 +636,22 @@ class AutopilotEngine:
         """
         Check if folder exists and handle missing folders.
 
+        Uses per-account folder policies from config, with CLI flags as overrides:
+        - auto_create CLI flag: Always create folder (overrides policy)
+        - interactive CLI flag: Always prompt user (overrides policy)
+        - Otherwise: Use account's folder_policy (auto_create, interactive, queue)
+
         Args:
             target_account: Account to check, or LOCAL_ACCOUNT_KEY for local "On My Mac" mailboxes.
+            interactive: CLI flag to force interactive mode.
+            auto_create: CLI flag to force auto-creation.
 
         Returns:
             - None if folder exists or was created (continue with action)
             - ProcessResult if action should be queued or skipped
         """
         is_local = target_account == LOCAL_ACCOUNT_KEY
+        account_for_policy = target_account if not is_local else "On My Mac"
 
         # Load appropriate mailbox cache
         if is_local:
@@ -630,7 +671,15 @@ class AutopilotEngine:
         # Folder doesn't exist - find similar
         similar = find_similar_mailbox(target_folder, mailbox_list)
 
+        # Determine effective policy: CLI flags override config
         if auto_create:
+            effective_policy = "auto_create"
+        elif interactive:
+            effective_policy = "interactive"
+        else:
+            effective_policy = self.config.get_folder_policy(account_for_policy)
+
+        if effective_policy == "auto_create":
             # Auto-create mode - just create the folder
             try:
                 if is_local:
@@ -653,7 +702,7 @@ class AutopilotEngine:
                     error=f"Failed to create folder \"{target_folder}\": {e}",
                 )
 
-        if interactive:
+        if effective_policy == "interactive":
             # Prompt user for decision
             chosen_folder, should_create = self._prompt_folder_decision(
                 target_folder, similar
@@ -694,8 +743,9 @@ class AutopilotEngine:
 
             return None  # Continue with action
         else:
-            # Autonomous mode - queue for later review
-            self.db.add_pending_action(
+            # Queue policy - queue for manual folder creation with folder info
+            pending_account = account_for_policy if account_for_policy else email.account
+            self.db.add_pending_folder_action(
                 message_id=email.id,
                 email_summary=f"{email.sender}: {email.subject[:50]}",
                 proposed_action=decision.model_dump(),
@@ -705,12 +755,191 @@ class AutopilotEngine:
                     + (f" (similar: \"{similar}\")" if similar else "")
                     + f" - {decision.reasoning}"
                 ),
+                pending_folder=target_folder,
+                pending_account=pending_account,
             )
+
+            # Track for end-of-run notification
+            key = (target_folder, pending_account)
+            if key not in self._new_pending_folders:
+                self._new_pending_folders[key] = []
+            self._new_pending_folders[key].append({
+                "sender": email.sender,
+                "subject": email.subject,
+                "date": email.date.strftime("%Y-%m-%d %H:%M") if email.date else "",
+            })
+
             return ProcessResult(
                 message_id=email.id,
                 queued=True,
-                reason=f"Folder \"{target_folder}\" doesn't exist",
+                reason=f"Folder \"{target_folder}\" doesn't exist (queued for {pending_account})",
             )
+
+    def _notify_pending_folders(self, verbose: int) -> None:
+        """Show notification for folders that need manual creation.
+
+        Checks per-account notification settings and shows an AppleScript dialog
+        with folder names, message counts, and sample messages.
+
+        Args:
+            verbose: Verbosity level for console output.
+        """
+        if not self._new_pending_folders:
+            return
+
+        # Build pending items for notification, respecting per-account settings
+        pending_items: list[dict] = []
+        for (folder, account), messages in self._new_pending_folders.items():
+            # Check if this account wants notifications
+            if not self.config.should_notify(account):
+                continue
+
+            pending_items.append({
+                "pending_folder": folder,
+                "pending_account": account,
+                "message_count": len(messages),
+                "sample_messages": messages[:3],  # Show up to 3 samples
+            })
+
+        if not pending_items:
+            return
+
+        # Log and show console message
+        total_folders = len(pending_items)
+        total_messages = sum(item["message_count"] for item in pending_items)
+        if verbose >= 1:
+            console.print(
+                f"\n[yellow]⚠ {total_folders} folder(s) need creation, "
+                f"{total_messages} message(s) waiting[/yellow]"
+            )
+
+        # Show AppleScript notification dialog
+        try:
+            notify_pending_folders(pending_items)
+        except Exception as e:
+            logger = get_error_logger()
+            logger.warning(f"Failed to show pending folders notification: {e}")
+
+    async def retry_pending_folders(
+        self,
+        account: str | None = None,
+        dry_run: bool = False,
+        verbose: int = 1,
+    ) -> dict[str, int]:
+        """Retry pending folder actions for folders that now exist.
+
+        Checks if any folders queued for creation now exist, and executes
+        the pending move actions for those folders.
+
+        Args:
+            account: Optionally filter to a specific account.
+            dry_run: If True, show what would happen without executing.
+            verbose: Verbosity level for output.
+
+        Returns:
+            Dict with counts: {resolved_folders, executed_actions, errors}
+        """
+        results = {"resolved_folders": 0, "executed_actions": 0, "errors": 0}
+
+        # Get all pending folders
+        pending = self.db.get_pending_folders(account=account)
+        if not pending:
+            if verbose >= 1:
+                console.print("[dim]No pending folders to retry.[/dim]")
+            return results
+
+        if verbose >= 1:
+            console.print(f"\n[bold]Checking {len(pending)} pending folder(s)...[/bold]\n")
+
+        for item in pending:
+            folder = item["pending_folder"]
+            pending_account = item["pending_account"]
+
+            # Load mailbox cache for this account
+            is_local = pending_account == "On My Mac"
+            if is_local:
+                mailbox_list = self._load_local_mailbox_cache()
+            else:
+                self._load_mailbox_cache(pending_account)
+                mailbox_list = self.mailbox_cache
+
+            # Check if folder now exists
+            folder_exists = any(
+                f.lower() == folder.lower() for f in mailbox_list
+            )
+
+            if not folder_exists:
+                if verbose >= 2:
+                    console.print(
+                        f"[dim]  ✗ \"{folder}\" ({pending_account}) "
+                        f"- still doesn't exist ({item['message_count']} waiting)[/dim]"
+                    )
+                continue
+
+            # Folder exists! Process pending actions
+            results["resolved_folders"] += 1
+            if verbose >= 1:
+                console.print(
+                    f"[green]  ✓ \"{folder}\" ({pending_account}) "
+                    f"- found! Processing {item['message_count']} pending action(s)...[/green]"
+                )
+
+            # Get all pending actions for this folder
+            actions = self.db.get_actions_for_folder(folder, pending_account)
+
+            for action_record in actions:
+                try:
+                    if dry_run:
+                        if verbose >= 1:
+                            console.print(
+                                f"      [dry-run] Would execute: {action_record['email_summary']}"
+                            )
+                        results["executed_actions"] += 1
+                        continue
+
+                    # Execute the pending action
+                    proposed = action_record["proposed_action"]
+                    message_id = action_record["message_id"]
+
+                    # Execute the move
+                    if is_local:
+                        move_message(message_id, folder, LOCAL_ACCOUNT_KEY)
+                    else:
+                        move_message(message_id, folder, pending_account)
+
+                    # Mark as processed
+                    self.db.mark_as_processed(message_id, proposed)
+
+                    # Remove from pending
+                    self.db.remove_pending_action(action_record["id"])
+
+                    results["executed_actions"] += 1
+                    if verbose >= 1:
+                        console.print(
+                            f"      [green]✓[/green] Moved: {action_record['email_summary']}"
+                        )
+
+                except Exception as e:
+                    results["errors"] += 1
+                    logger = get_account_logger(pending_account)
+                    logger.error(
+                        f"Failed to process pending action for "
+                        f"\"{action_record['email_summary']}\": {e}"
+                    )
+                    if verbose >= 1:
+                        console.print(
+                            f"      [red]✗[/red] Error: {action_record['email_summary']} - {e}"
+                        )
+
+        if verbose >= 1:
+            console.print(
+                f"\n[bold]Retry complete:[/bold] "
+                f"{results['resolved_folders']} folder(s) resolved, "
+                f"{results['executed_actions']} action(s) executed, "
+                f"{results['errors']} error(s)"
+            )
+
+        return results
 
     async def _execute_action(
         self,
@@ -864,6 +1093,8 @@ class AutopilotEngine:
             )
 
         except Exception as e:
+            logger = get_account_logger(email.account)
+            logger.error(f"Action failed ({action_name}): {e}")
             return ProcessResult(
                 message_id=email.id,
                 success=False,
@@ -1111,6 +1342,8 @@ class AutopilotEngine:
             )
 
         except Exception as e:
+            logger = get_account_logger(email.account)
+            logger.error(f"Quick rule \"{rule.name}\" failed: {e}")
             return ProcessResult(
                 message_id=email.id,
                 success=False,
