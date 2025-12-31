@@ -411,6 +411,103 @@ LOGS_EOF
 
 chmod +x "$BIN_DIR/email-nurse-logs.sh"
 
+# Watcher script (hybrid triggers - polls for new messages + interval)
+cat > "$BIN_DIR/email-nurse-watcher.sh" << 'WATCHER_EOF'
+#!/bin/zsh
+
+# email-nurse-watcher.sh
+# System-installed launcher for email-nurse watcher (repo-independent)
+#
+# This script runs the continuous watcher process that monitors for new
+# emails and triggers scans based on hybrid triggers (new messages + interval).
+#
+# Paths:
+#   Install:  ~/.local/share/email-nurse/current/
+#   Config:   ~/.config/email-nurse/
+#   State:    ~/.local/state/email-nurse/
+#   Logs:     ~/Library/Logs/
+#   Secrets:  macOS Keychain
+
+# Strict mode
+set -o pipefail
+
+# Paths
+INSTALL_DIR="$HOME/.local/share/email-nurse/current"
+CONFIG_DIR="$HOME/.config/email-nurse"
+STATE_DIR="$HOME/.local/state/email-nurse"
+LOG_DIR="$HOME/Library/Logs"
+
+# Log files
+ERROR_LOG="${LOG_DIR}/email-nurse-watcher-error.log"
+OUTPUT_LOG="${LOG_DIR}/email-nurse-watcher.log"
+
+# Ensure state directory exists
+mkdir -p "$STATE_DIR"
+
+# ─────────────────────────────────────────────────────────────────────
+# Skip if Mail.app is not running
+# ─────────────────────────────────────────────────────────────────────
+if ! pgrep -xq "Mail"; then
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - Mail.app not running, exiting"
+    exit 0
+fi
+
+# ─────────────────────────────────────────────────────────────────────
+# Load Secrets from macOS Keychain
+# ─────────────────────────────────────────────────────────────────────
+export ANTHROPIC_API_KEY=$(security find-generic-password -a "$USER" \
+    -s "email-nurse-anthropic" -w 2>/dev/null)
+
+# Optional: OpenAI key if present
+OPENAI_KEY=$(security find-generic-password -a "$USER" \
+    -s "email-nurse-openai" -w 2>/dev/null)
+if [[ -n "$OPENAI_KEY" ]]; then
+    export OPENAI_API_KEY="$OPENAI_KEY"
+fi
+
+# ─────────────────────────────────────────────────────────────────────
+# Load Non-Sensitive Config from .env (if exists)
+# ─────────────────────────────────────────────────────────────────────
+if [[ -f "$CONFIG_DIR/.env" ]]; then
+    # Load all vars EXCEPT API keys (those come from Keychain)
+    while IFS='=' read -r key value; do
+        # Skip comments, empty lines, and API keys
+        [[ "$key" =~ ^#.*$ || -z "$key" || "$key" =~ .*API_KEY.* ]] && continue
+        # Remove quotes from value
+        value="${value%\"}"
+        value="${value#\"}"
+        value="${value%\'}"
+        value="${value#\'}"
+        export "$key=$value"
+    done < "$CONFIG_DIR/.env"
+fi
+
+# ─────────────────────────────────────────────────────────────────────
+# Verify Installation
+# ─────────────────────────────────────────────────────────────────────
+if [[ ! -d "$INSTALL_DIR/venv" ]]; then
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - ERROR: Installation not found at $INSTALL_DIR" >> "$ERROR_LOG"
+    exit 1
+fi
+
+if [[ -z "$ANTHROPIC_API_KEY" ]]; then
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - ERROR: ANTHROPIC_API_KEY not found in Keychain" >> "$ERROR_LOG"
+    echo "Run: security add-generic-password -a \"\$USER\" -s \"email-nurse-anthropic\" -w \"sk-ant-...\"" >> "$ERROR_LOG"
+    exit 1
+fi
+
+# ─────────────────────────────────────────────────────────────────────
+# Run email-nurse watcher
+# ─────────────────────────────────────────────────────────────────────
+echo "$(date '+%Y-%m-%d %H:%M:%S') - Starting watcher process"
+
+# The watcher is a long-running process. KeepAlive in the LaunchAgent
+# will restart it if it exits. No manual retry logic needed.
+exec "$INSTALL_DIR/venv/bin/email-nurse" autopilot watch -v --auto-create
+WATCHER_EOF
+
+chmod +x "$BIN_DIR/email-nurse-watcher.sh"
+
 success "Launch scripts installed"
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -463,6 +560,66 @@ launchctl load "$PLIST_DIR/$PLIST_NAME"
 success "LaunchAgent installed and loaded"
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Step 6b: Install Watcher LaunchAgent (not loaded by default)
+# ─────────────────────────────────────────────────────────────────────────────
+
+WATCHER_PLIST_NAME="com.bss.email-nurse-watcher.plist"
+
+info "Installing Watcher LaunchAgent (not enabled by default)..."
+
+# Unload existing if present
+launchctl unload "$PLIST_DIR/$WATCHER_PLIST_NAME" 2>/dev/null || true
+
+# Create watcher plist
+cat > "$PLIST_DIR/$WATCHER_PLIST_NAME" << WATCHER_PLIST_EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.bss.email-nurse-watcher</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>$BIN_DIR/email-nurse-watcher.sh</string>
+    </array>
+
+    <!-- KeepAlive: restart if process exits -->
+    <key>KeepAlive</key>
+    <dict>
+        <!-- Only run when Mail.app is running -->
+        <key>OtherJobEnabled</key>
+        <dict>
+            <key>com.apple.mail</key>
+            <true/>
+        </dict>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Throttle restarts to avoid tight loops on failure -->
+    <key>ThrottleInterval</key>
+    <integer>60</integer>
+
+    <key>StandardOutPath</key>
+    <string>$LOG_DIR/email-nurse-watcher.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>$LOG_DIR/email-nurse-watcher-error.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+</dict>
+</plist>
+WATCHER_PLIST_EOF
+
+success "Watcher LaunchAgent installed (run 'email-nurse-enable-watcher' to switch modes)"
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Step 7: Copy Example Configs (if needed)
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -493,8 +650,22 @@ echo "    View logs:     ${CYAN}~/.local/bin/email-nurse-logs.sh${NC}"
 echo "    Run manually:  ${CYAN}~/.local/bin/email-nurse-autopilot.sh${NC}"
 echo "    Check status:  ${CYAN}launchctl list | grep email-nurse${NC}"
 echo ""
-echo "  ${BOLD}LaunchAgent:${NC}"
-echo "    Runs every 9 minutes when Mail.app is open"
-echo "    Stop:  ${CYAN}launchctl unload ~/Library/LaunchAgents/$PLIST_NAME${NC}"
-echo "    Start: ${CYAN}launchctl load ~/Library/LaunchAgents/$PLIST_NAME${NC}"
+echo "  ${BOLD}Trigger Modes:${NC}"
+echo ""
+echo "    ${YELLOW}Interval Mode (default - currently active):${NC}"
+echo "      Runs every 9 minutes when Mail.app is open"
+echo "      LaunchAgent: ${CYAN}$PLIST_NAME${NC}"
+echo ""
+echo "    ${YELLOW}Watcher Mode (hybrid triggers - installed but not active):${NC}"
+echo "      Polls inbox every 30s for new messages + runs every 10min"
+echo "      Triggers immediately when new mail arrives"
+echo "      LaunchAgent: ${CYAN}$WATCHER_PLIST_NAME${NC}"
+echo ""
+echo "    ${BOLD}To switch to Watcher Mode:${NC}"
+echo "      ${CYAN}launchctl unload ~/Library/LaunchAgents/$PLIST_NAME${NC}"
+echo "      ${CYAN}launchctl load ~/Library/LaunchAgents/$WATCHER_PLIST_NAME${NC}"
+echo ""
+echo "    ${BOLD}To switch back to Interval Mode:${NC}"
+echo "      ${CYAN}launchctl unload ~/Library/LaunchAgents/$WATCHER_PLIST_NAME${NC}"
+echo "      ${CYAN}launchctl load ~/Library/LaunchAgents/$PLIST_NAME${NC}"
 echo ""
