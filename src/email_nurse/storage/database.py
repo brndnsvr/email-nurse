@@ -104,6 +104,13 @@ class AutopilotDatabase:
                     first_seen_at TEXT NOT NULL
                 );
 
+                -- Watcher state for crash recovery
+                CREATE TABLE IF NOT EXISTS watcher_state (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
                 -- Indexes for common queries
                 CREATE INDEX IF NOT EXISTS idx_processed_at
                     ON processed_emails(processed_at);
@@ -759,3 +766,48 @@ class AutopilotDatabase:
                 "DELETE FROM email_first_seen WHERE message_id = ?",
                 (message_id,),
             )
+
+    # ─── Watcher State (Crash Recovery) ───────────────────────────────────
+
+    def get_watcher_state(self, key: str) -> str | None:
+        """Get a watcher state value by key.
+
+        Args:
+            key: State key (e.g., 'last_inbox_counts', 'last_scan_completed').
+
+        Returns:
+            The value string, or None if not found.
+        """
+        with self._connection() as conn:
+            cursor = conn.execute(
+                "SELECT value FROM watcher_state WHERE key = ?",
+                (key,),
+            )
+            row = cursor.fetchone()
+            return row["value"] if row else None
+
+    def set_watcher_state(self, key: str, value: str) -> None:
+        """Set a watcher state value.
+
+        Args:
+            key: State key.
+            value: Value to store (typically JSON for complex data).
+        """
+        with self._connection() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO watcher_state (key, value, updated_at)
+                VALUES (?, ?, ?)
+                """,
+                (key, value, datetime.now().isoformat()),
+            )
+
+    def clear_watcher_state(self) -> int:
+        """Clear all watcher state (useful for reset).
+
+        Returns:
+            Number of state entries cleared.
+        """
+        with self._connection() as conn:
+            cursor = conn.execute("DELETE FROM watcher_state")
+            return cursor.rowcount

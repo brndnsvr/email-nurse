@@ -608,6 +608,91 @@ def autopilot_run(
         console.print(f"  Duration: {duration:.1f}s")
 
 
+@autopilot_app.command("watch")
+def autopilot_watch(
+    verbose: Annotated[int, typer.Option("--verbose", "-v", count=True, help="Verbosity: -v normal, -vv detailed, -vvv debug")] = 1,
+    dry_run: Annotated[bool, typer.Option("--dry-run", "-n", help="Don't execute actions (test mode)")] = False,
+    poll_interval: Annotated[int | None, typer.Option("--poll", "-p", help="Seconds between inbox count checks (default: 30)")] = None,
+    post_scan_interval: Annotated[int | None, typer.Option("--interval", "-i", help="Minutes between scheduled scans (default: 10)")] = None,
+    provider: Annotated[str | None, typer.Option("--provider", help="AI provider (default from settings)")] = None,
+    account: Annotated[str | None, typer.Option("--account", "-a", help="Process only this account (overrides config)")] = None,
+    auto_create: Annotated[bool, typer.Option("--auto-create", "-c", help="Auto-create missing folders without prompting")] = False,
+) -> None:
+    """
+    Run continuous watcher with hybrid triggers.
+
+    Polls inbox every --poll seconds (default 30). Triggers scan when:
+
+    \b
+    - New messages detected (count increased)
+    - --interval minutes elapsed since last scan (default 10)
+
+    Use Ctrl+C to stop gracefully.
+    """
+    from email_nurse.autopilot import WatcherEngine, load_autopilot_config
+    from email_nurse.logging import setup_logging
+    from email_nurse.storage.database import AutopilotDatabase
+
+    settings = get_settings()
+
+    # Initialize logging
+    setup_logging(
+        log_dir=settings.log_dir,
+        log_level=settings.log_level,
+        max_bytes=settings.log_rotation_size_mb * 1024 * 1024,
+        backup_count=settings.log_backup_count,
+    )
+
+    # Use provider from settings if not specified
+    provider = provider or settings.ai_provider
+
+    # Load autopilot config
+    if not settings.autopilot_config_path.exists():
+        console.print("[red]Autopilot config not found.[/red]")
+        console.print(f"Run [bold]email-nurse autopilot init[/bold] to create one.")
+        raise typer.Exit(1)
+
+    config = load_autopilot_config(settings.autopilot_config_path)
+
+    # Override accounts if --account specified
+    if account:
+        config.accounts = [account]
+
+    # Get AI provider
+    if provider == "claude":
+        from email_nurse.ai.claude import ClaudeProvider
+        ai = ClaudeProvider(api_key=settings.anthropic_api_key, model=settings.claude_model)
+    elif provider == "openai":
+        from email_nurse.ai.openai import OpenAIProvider
+        ai = OpenAIProvider(api_key=settings.openai_api_key, model=settings.openai_model)
+    elif provider == "ollama":
+        from email_nurse.ai.ollama import OllamaProvider
+        ai = OllamaProvider(host=settings.ollama_host, model=settings.ollama_model)
+    else:
+        console.print(f"[red]Unknown provider:[/red] {provider}")
+        raise typer.Exit(1)
+
+    # Initialize database
+    db = AutopilotDatabase(settings.database_path)
+
+    # Create watcher engine
+    watcher = WatcherEngine(
+        settings=settings,
+        ai_provider=ai,
+        database=db,
+        config=config,
+    )
+
+    # Run the watcher
+    asyncio.run(watcher.run(
+        verbose=verbose,
+        dry_run=dry_run,
+        auto_create=auto_create,
+        poll_interval=poll_interval,
+        post_scan_interval=post_scan_interval,
+    ))
+
+
 @autopilot_app.command("queue")
 def autopilot_queue(
     limit: Annotated[int, typer.Option("--limit", "-l", help="Max items to show")] = 20,
@@ -1097,6 +1182,26 @@ def autopilot_reset(
     cleared = db.clear_processed(before_days=older_than)
     console.print(f"[green]✓ Cleared {cleared} processed email records.[/green]")
     console.print("Next autopilot run will re-analyze these messages.")
+
+
+@autopilot_app.command("reset-watcher")
+def autopilot_reset_watcher() -> None:
+    """Reset watcher state (clears stale PID lock and counters)."""
+    from email_nurse.storage.database import AutopilotDatabase
+
+    settings = get_settings()
+
+    if not settings.database_path.exists():
+        console.print("[yellow]No database found - nothing to reset.[/yellow]")
+        return
+
+    db = AutopilotDatabase(settings.database_path)
+    cleared = db.clear_watcher_state()
+
+    if cleared > 0:
+        console.print(f"[green]✓ Cleared watcher state ({cleared} entries).[/green]")
+    else:
+        console.print("[yellow]No watcher state to clear.[/yellow]")
 
 
 @autopilot_app.command("clear-cache")

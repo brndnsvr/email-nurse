@@ -114,6 +114,17 @@ class Settings(BaseSettings):
         default=60, ge=1, description="Minutes to cache mailbox list before refreshing"
     )
 
+    # Watcher settings (for hybrid trigger mode)
+    poll_interval_seconds: int = Field(
+        default=30, ge=5, description="Seconds between inbox count checks"
+    )
+    post_scan_interval_minutes: int = Field(
+        default=10, ge=1, description="Minutes to wait after any scan before next scheduled scan"
+    )
+    watcher_startup_scan: bool = Field(
+        default=True, description="Run immediate scan when watcher starts"
+    )
+
     @property
     def rules_path(self) -> Path:
         """Full path to rules file."""
