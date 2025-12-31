@@ -2,6 +2,7 @@
 
 from email_nurse.autopilot.config import AutopilotConfig, load_autopilot_config
 from email_nurse.autopilot.engine import AutopilotEngine
+from email_nurse.autopilot.watcher import WatcherEngine
 from email_nurse.autopilot.models import (
     AutopilotDecision,
     AutopilotRunResult,
@@ -14,6 +15,7 @@ from email_nurse.autopilot.models import (
 __all__ = [
     "AutopilotConfig",
     "AutopilotEngine",
+    "WatcherEngine",
     "load_autopilot_config",
     "AutopilotDecision",
     "AutopilotRunResult",

@@ -207,6 +207,36 @@ def get_message_by_id(message_id: str) -> EmailMessage | None:
     return None
 
 
+def get_inbox_count(account: str, mailbox: str = "INBOX") -> int:
+    """
+    Get message count for a mailbox (O(1) - just reads count property).
+
+    This is much faster than get_messages() as it doesn't enumerate messages.
+    Used by the watcher for efficient polling.
+
+    Args:
+        account: Account name to check.
+        mailbox: Mailbox name (default: INBOX).
+
+    Returns:
+        Number of messages in the mailbox, or 0 on error.
+    """
+    account_escaped = escape_applescript_string(account)
+    mailbox_escaped = escape_applescript_string(mailbox)
+
+    script = f'''
+    tell application "Mail"
+        return count of messages of mailbox "{mailbox_escaped}" of account "{account_escaped}"
+    end tell
+    '''
+
+    try:
+        result = run_applescript(script, timeout=10)
+        return int(result) if result else 0
+    except (ValueError, Exception):
+        return 0
+
+
 def _parse_date(date_str: str) -> datetime | None:
     """Parse an AppleScript date string into a datetime object.
 
