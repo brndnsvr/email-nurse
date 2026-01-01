@@ -1369,6 +1369,43 @@ class AutopilotEngine:
             return f"{action_upper} ({result.target_folder})"
         return action_upper
 
+    def _get_error_reason(self, error: str | None) -> str:
+        """Extract a brief human-readable reason from an error message."""
+        if not error:
+            return "Failed"
+
+        error_lower = error.lower()
+
+        # Message not found (deleted during processing)
+        if "-1719" in error or "invalid index" in error_lower:
+            return "Msg not found"
+
+        # Authentication errors
+        if (
+            "authenticationerror" in error_lower
+            or "401" in error
+            or "invalid x-api-key" in error_lower
+        ):
+            return "Auth failed"
+
+        # AI classification errors
+        if "ai classification failed" in error_lower:
+            return "AI error"
+
+        # Timeouts
+        if "timeout" in error_lower:
+            return "Timeout"
+
+        # Rate limiting
+        if "ratelimiterror" in error_lower or "429" in error:
+            return "Rate limited"
+
+        # Mailbox not found
+        if "mailbox" in error_lower and "doesn't exist" in error_lower:
+            return "Folder missing"
+
+        return "Failed"
+
     def _print_result_compact(self, email: EmailMessage, result: ProcessResult) -> None:
         """Print compact one-liner for -v mode."""
         # Build prefix: [RULE] if matched, empty otherwise
@@ -1387,7 +1424,8 @@ class AutopilotEngine:
             console.print(f"  {prefix}[green]{self._format_action(result)}[/green] {email.sender}")
             console.print(f"    {subject_short}")
         else:
-            console.print(f"  {prefix}[red]ERROR[/red] {email.sender}")
+            reason = self._get_error_reason(result.error)
+            console.print(f"  {prefix}[red]ERROR[/red] [dim]({reason})[/dim] {email.sender}")
             console.print(f"    {subject_short}")
 
     def _print_result_detailed(self, email: EmailMessage, result: ProcessResult) -> None:
