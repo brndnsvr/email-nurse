@@ -481,3 +481,81 @@ def get_mailboxes(account_name: str | None = None) -> list[str]:
 
     result = run_applescript(script)
     return result.split(RECORD_SEP) if result else []
+
+
+def compose_email(
+    to_address: str,
+    subject: str,
+    content: str,
+    *,
+    from_account: str | None = None,
+    sender_address: str | None = None,
+    send_immediately: bool = True,
+) -> bool:
+    """
+    Compose and optionally send a new email via Mail.app.
+
+    Args:
+        to_address: Recipient email address.
+        subject: Email subject line.
+        content: Plain text email body (newlines preserved).
+        from_account: Account to send from (uses first enabled if not specified).
+        sender_address: Specific sender email address (must match account).
+        send_immediately: If True, send immediately; if False, leave as draft.
+
+    Returns:
+        True if successful, False otherwise.
+    """
+    import tempfile
+
+    # Import here to avoid circular import
+    from email_nurse.mail.accounts import get_accounts
+
+    subject_escaped = escape_applescript_string(subject)
+    to_escaped = escape_applescript_string(to_address)
+
+    # Use first enabled account if not specified
+    if from_account is None:
+        accounts = get_accounts()
+        enabled = [a for a in accounts if a.enabled]
+        if not enabled:
+            raise ValueError("No enabled email accounts found")
+        from_account = enabled[0].name
+
+    send_cmd = "send newMsg" if send_immediately else ""
+
+    # Get sender address - use specific address if provided, otherwise first from account
+    account_escaped = escape_applescript_string(from_account)
+    sender_escaped = escape_applescript_string(sender_address) if sender_address else None
+
+    # Write content to temp file to avoid AppleScript escaping issues
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+        f.write(content)
+        temp_path = f.name
+
+    try:
+        # Build sender determination AppleScript
+        # If sender_address is specified, use it directly; otherwise get first from account
+        if sender_escaped:
+            sender_setup = f'set senderAddr to "{sender_escaped}"'
+        else:
+            sender_setup = f'set senderAddr to first item of (email addresses of account "{account_escaped}")'
+
+        script = f'''
+        set filePath to POSIX file "{temp_path}"
+        set msgContent to read filePath as text
+        tell application "Mail"
+            {sender_setup}
+            set newMsg to make new outgoing message with properties {{subject:"{subject_escaped}", content:msgContent, visible:false, sender:senderAddr}}
+            tell newMsg
+                make new to recipient at end of to recipients with properties {{address:"{to_escaped}"}}
+            end tell
+            {send_cmd}
+        end tell
+        '''
+        run_applescript(script, timeout=30)
+        return True
+    finally:
+        # Clean up temp file
+        import os
+        os.unlink(temp_path)

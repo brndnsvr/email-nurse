@@ -840,6 +840,90 @@ def autopilot_history(
     console.print(table)
 
 
+@autopilot_app.command("report")
+def autopilot_report(
+    to: Annotated[
+        str | None,
+        typer.Option("--to", "-t", help="Email address to send report to"),
+    ] = None,
+    date_str: Annotated[
+        str | None,
+        typer.Option("--date", "-d", help="Date to report on (YYYY-MM-DD)"),
+    ] = None,
+    preview: Annotated[
+        bool,
+        typer.Option("--preview", "-p", help="Preview report without sending"),
+    ] = False,
+    account: Annotated[
+        str | None,
+        typer.Option("--account", "-a", help="Account to send from"),
+    ] = None,
+) -> None:
+    """
+    Generate and send daily activity report.
+
+    By default, sends to the first email address of the first enabled account.
+    Use --preview to see the report without sending.
+    """
+    from datetime import datetime
+
+    from email_nurse.autopilot.reports import DailyReportGenerator
+    from email_nurse.mail.accounts import get_accounts
+    from email_nurse.storage.database import AutopilotDatabase
+
+    settings = get_settings()
+    db = AutopilotDatabase(settings.database_path)
+
+    # Parse date if provided
+    report_date = None
+    if date_str:
+        try:
+            report_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+        except ValueError:
+            console.print(f"[red]Invalid date format: {date_str}. Use YYYY-MM-DD.[/red]")
+            raise typer.Exit(1)
+
+    # Get recipient if not specified
+    if to is None and not preview:
+        # Check settings first
+        if settings.report_recipient:
+            to = settings.report_recipient
+        else:
+            # Fall back to first email from first enabled account
+            accounts = get_accounts()
+            enabled = [a for a in accounts if a.enabled and a.email_addresses]
+            if enabled:
+                to = enabled[0].email_addresses[0]
+            else:
+                console.print("[red]No email address found. Use --to to specify recipient.[/red]")
+                raise typer.Exit(1)
+
+    generator = DailyReportGenerator(db)
+
+    # Use configured account if not specified via CLI
+    if account is None and settings.report_account:
+        account = settings.report_account
+
+    # Get sender address from settings
+    sender_address = settings.report_sender
+
+    if preview:
+        report_text = generator.generate_report(report_date)
+        console.print(report_text)
+    else:
+        from_display = sender_address or account or "default"
+        console.print(f"[dim]Sending report to {to} (from {from_display})...[/dim]")
+        try:
+            if generator.send_report(to, report_date, account, sender_address):  # type: ignore[arg-type]
+                console.print(f"[green]Report sent to {to}[/green]")
+            else:
+                console.print("[red]Failed to send report[/red]")
+                raise typer.Exit(1)
+        except Exception as e:
+            console.print(f"[red]Error sending report: {e}[/red]")
+            raise typer.Exit(1)
+
+
 @autopilot_app.command("init")
 def autopilot_init() -> None:
     """Initialize autopilot configuration."""

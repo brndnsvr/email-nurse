@@ -125,6 +125,23 @@ class Settings(BaseSettings):
         default=True, description="Run immediate scan when watcher starts"
     )
 
+    # Report settings
+    report_enabled: bool = Field(
+        default=True, description="Enable daily reports"
+    )
+    report_recipient: str | None = Field(
+        default=None, description="Email address for daily reports (uses first account if not set)"
+    )
+    report_sender: str | None = Field(
+        default=None, description="Sender email address for reports (must match an account)"
+    )
+    report_time: str = Field(
+        default="21:00", description="Time to send daily report (HH:MM)"
+    )
+    report_account: str | None = Field(
+        default=None, description="Account to send reports from (uses first enabled if not set)"
+    )
+
     @property
     def rules_path(self) -> Path:
         """Full path to rules file."""
