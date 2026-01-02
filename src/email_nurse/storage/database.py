@@ -3,7 +3,7 @@
 import json
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Generator
 
@@ -624,6 +624,109 @@ class AutopilotDatabase:
             stats["last_processed"] = row[0] if row else None
 
             return stats
+
+    def get_daily_activity(
+        self, report_date: date | None = None
+    ) -> dict[str, Any]:
+        """
+        Get activity summary for a specific day.
+
+        Args:
+            report_date: Date to get activity for (defaults to today).
+
+        Returns:
+            Dictionary with date, entries, action_counts, folder_counts,
+            account_counts, error_count, and total.
+        """
+        if report_date is None:
+            report_date = date.today()
+
+        start = f"{report_date.isoformat()}T00:00:00"
+        end = f"{report_date.isoformat()}T23:59:59"
+
+        with self._connection() as conn:
+            # Get detailed log entries with email info
+            entries = conn.execute(
+                """
+                SELECT
+                    a.timestamp,
+                    a.action,
+                    a.source,
+                    a.details,
+                    p.sender,
+                    p.subject,
+                    p.account,
+                    p.confidence
+                FROM audit_log a
+                LEFT JOIN processed_emails p ON a.message_id = p.message_id
+                WHERE a.timestamp BETWEEN ? AND ?
+                ORDER BY a.timestamp
+                """,
+                (start, end),
+            ).fetchall()
+
+            # Get action counts
+            action_rows = conn.execute(
+                """
+                SELECT action, COUNT(*) as count
+                FROM audit_log
+                WHERE timestamp BETWEEN ? AND ?
+                GROUP BY action
+                """,
+                (start, end),
+            ).fetchall()
+            action_counts = {row["action"]: row["count"] for row in action_rows}
+
+            # Get folder counts from processed_emails action_taken JSON
+            folder_rows = conn.execute(
+                """
+                SELECT
+                    json_extract(action_taken, '$.target_folder') as folder,
+                    COUNT(*) as count
+                FROM processed_emails
+                WHERE processed_at BETWEEN ? AND ?
+                    AND json_extract(action_taken, '$.target_folder') IS NOT NULL
+                GROUP BY folder
+                """,
+                (start, end),
+            ).fetchall()
+            folder_counts = {
+                row["folder"]: row["count"]
+                for row in folder_rows
+                if row["folder"]
+            }
+
+            # Get account counts
+            account_rows = conn.execute(
+                """
+                SELECT account, COUNT(*) as count
+                FROM processed_emails
+                WHERE processed_at BETWEEN ? AND ?
+                GROUP BY account
+                """,
+                (start, end),
+            ).fetchall()
+            account_counts = {row["account"]: row["count"] for row in account_rows}
+
+            # Count errors (actions that failed)
+            error_count = conn.execute(
+                """
+                SELECT COUNT(*) FROM audit_log
+                WHERE timestamp BETWEEN ? AND ?
+                    AND action LIKE '%error%'
+                """,
+                (start, end),
+            ).fetchone()[0]
+
+            return {
+                "date": report_date,
+                "entries": [dict(row) for row in entries],
+                "action_counts": action_counts,
+                "folder_counts": folder_counts,
+                "account_counts": account_counts,
+                "error_count": error_count,
+                "total": len(entries),
+            }
 
     # ─── Mailbox Cache ─────────────────────────────────────────────────────
 
