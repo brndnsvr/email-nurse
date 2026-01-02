@@ -176,17 +176,34 @@ class DailyReportGenerator:
         Returns:
             True if email was sent successfully, False otherwise.
         """
-        from email_nurse.mail.actions import compose_email
+        from email_nurse.config import Settings
+        from email_nurse.mail.actions import compose_email, send_email_smtp
 
+        settings = Settings()
         report_text = self.generate_report(report_date)
         actual_date = report_date or date.today()
         subject = f"Email Nurse Report - {actual_date.strftime('%b %d, %Y')}"
 
-        return compose_email(
-            to_address=to_address,
-            subject=subject,
-            content=report_text,
-            from_account=from_account,
-            sender_address=sender_address,
-            send_immediately=True,
-        )
+        # Use direct SMTP if configured, otherwise fall back to Mail.app
+        if settings.smtp_enabled and settings.smtp_host and settings.smtp_username and settings.smtp_password:
+            return send_email_smtp(
+                to_address=to_address,
+                subject=subject,
+                content=report_text,
+                smtp_host=settings.smtp_host,
+                smtp_port=settings.smtp_port,
+                smtp_username=settings.smtp_username,
+                smtp_password=settings.smtp_password,
+                from_address=settings.smtp_from_address or sender_address,
+                use_tls=settings.smtp_use_tls,
+            )
+        else:
+            # Fall back to Mail.app
+            return compose_email(
+                to_address=to_address,
+                subject=subject,
+                content=report_text,
+                from_account=from_account,
+                sender_address=sender_address,
+                send_immediately=True,
+            )
