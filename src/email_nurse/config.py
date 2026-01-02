@@ -142,6 +142,29 @@ class Settings(BaseSettings):
         default=None, description="Account to send reports from (uses first enabled if not set)"
     )
 
+    # SMTP settings (for direct email sending without Mail.app)
+    smtp_enabled: bool = Field(
+        default=False, description="Use direct SMTP instead of Mail.app for sending emails"
+    )
+    smtp_host: str | None = Field(
+        default=None, description="SMTP server hostname (e.g., smtp.gmail.com)"
+    )
+    smtp_port: int = Field(
+        default=587, description="SMTP server port (587 for STARTTLS, 465 for SSL)"
+    )
+    smtp_use_tls: bool = Field(
+        default=True, description="Use STARTTLS for SMTP connection"
+    )
+    smtp_username: str | None = Field(
+        default=None, description="SMTP username (usually your email address)"
+    )
+    smtp_password: str | None = Field(
+        default=None, description="SMTP password (use app-specific password for Gmail)"
+    )
+    smtp_from_address: str | None = Field(
+        default=None, description="From address for SMTP emails (defaults to smtp_username)"
+    )
+
     @property
     def rules_path(self) -> Path:
         """Full path to rules file."""

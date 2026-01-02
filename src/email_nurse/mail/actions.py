@@ -559,3 +559,77 @@ def compose_email(
         # Clean up temp file
         import os
         os.unlink(temp_path)
+
+
+def send_email_smtp(
+    to_address: str,
+    subject: str,
+    content: str,
+    *,
+    smtp_host: str,
+    smtp_port: int,
+    smtp_username: str,
+    smtp_password: str,
+    from_address: str | None = None,
+    use_tls: bool = True,
+) -> bool:
+    """
+    Send email using direct SMTP connection (bypasses Mail.app).
+
+    Args:
+        to_address: Recipient email address.
+        subject: Email subject line.
+        content: Plain text email body.
+        smtp_host: SMTP server hostname (e.g., smtp.gmail.com).
+        smtp_port: SMTP server port (587 for STARTTLS, 465 for SSL).
+        smtp_username: SMTP username (usually your email address).
+        smtp_password: SMTP password (use app-specific password for Gmail).
+        from_address: From address (defaults to smtp_username if not specified).
+        use_tls: Use STARTTLS for connection (default True).
+
+    Returns:
+        True if email was sent successfully, False otherwise.
+
+    Raises:
+        Various SMTP exceptions if sending fails.
+    """
+    import smtplib
+    from email.message import EmailMessage
+
+    # Default from_address to smtp_username
+    sender = from_address or smtp_username
+
+    # Create email message
+    msg = EmailMessage()
+    msg["From"] = sender
+    msg["To"] = to_address
+    msg["Subject"] = subject
+    msg.set_content(content)
+
+    try:
+        # Connect to SMTP server
+        if use_tls:
+            # Use STARTTLS (port 587)
+            server = smtplib.SMTP(smtp_host, smtp_port, timeout=30)
+            server.ehlo()
+            server.starttls()
+            server.ehlo()
+        else:
+            # Use SSL (port 465)
+            server = smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=30)
+            server.ehlo()
+
+        # Authenticate
+        server.login(smtp_username, smtp_password)
+
+        # Send email
+        server.send_message(msg)
+        server.quit()
+        return True
+
+    except smtplib.SMTPAuthenticationError as e:
+        raise RuntimeError(f"SMTP authentication failed: {e}") from e
+    except smtplib.SMTPException as e:
+        raise RuntimeError(f"SMTP error: {e}") from e
+    except Exception as e:
+        raise RuntimeError(f"Failed to send email: {e}") from e
