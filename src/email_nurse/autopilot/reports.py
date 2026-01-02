@@ -157,6 +157,184 @@ class DailyReportGenerator:
 
         return lines
 
+    def _format_report_html(self, activity: dict[str, Any]) -> str:
+        """Format activity data into HTML email."""
+        report_date: date = activity["date"]
+        date_str = report_date.strftime("%B %d, %Y")
+
+        total = activity["total"]
+        action_counts = activity["action_counts"]
+        error_count = activity["error_count"]
+        folder_counts = activity["folder_counts"]
+        account_counts = activity["account_counts"]
+        entries = activity["entries"]
+
+        # Build HTML
+        html_parts = [
+            '<!DOCTYPE html>',
+            '<html>',
+            '<head>',
+            '<meta charset="utf-8">',
+            '<meta name="viewport" content="width=device-width, initial-scale=1.0">',
+            '<style>',
+            '  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; line-height: 1.6; color: #333; max-width: 800px; margin: 0 auto; padding: 20px; background-color: #f5f5f7; }',
+            '  .container { background: white; border-radius: 12px; padding: 30px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }',
+            '  .header { text-align: center; border-bottom: 3px solid #007aff; padding-bottom: 20px; margin-bottom: 30px; }',
+            '  .header h1 { margin: 0; color: #007aff; font-size: 28px; }',
+            '  .header .date { color: #666; font-size: 16px; margin-top: 8px; }',
+            '  .summary { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 24px; border-radius: 8px; margin-bottom: 30px; }',
+            '  .summary h2 { margin: 0 0 16px 0; font-size: 20px; }',
+            '  .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; }',
+            '  .stat-item { background: rgba(255,255,255,0.2); padding: 12px; border-radius: 6px; }',
+            '  .stat-label { font-size: 13px; opacity: 0.9; margin-bottom: 4px; }',
+            '  .stat-value { font-size: 24px; font-weight: bold; }',
+            '  .section { margin-bottom: 30px; }',
+            '  .section h3 { color: #007aff; font-size: 18px; margin-bottom: 16px; border-bottom: 2px solid #e5e5e7; padding-bottom: 8px; }',
+            '  table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }',
+            '  th { background: #f5f5f7; color: #333; font-weight: 600; text-align: left; padding: 12px; border-bottom: 2px solid #007aff; }',
+            '  td { padding: 10px 12px; border-bottom: 1px solid #e5e5e7; }',
+            '  tr:hover { background: #f9f9f9; }',
+            '  .log-entry { background: #f9f9f9; border-left: 4px solid #007aff; padding: 16px; margin-bottom: 12px; border-radius: 4px; }',
+            '  .log-entry.error { border-left-color: #ff3b30; }',
+            '  .log-time { color: #666; font-size: 13px; font-weight: 600; }',
+            '  .log-action { color: #007aff; font-weight: 600; margin: 4px 0; }',
+            '  .log-detail { color: #666; font-size: 14px; margin: 2px 0; }',
+            '  .footer { text-align: center; color: #999; font-size: 13px; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e5e7; }',
+            '  .no-activity { text-align: center; color: #999; padding: 40px; }',
+            '</style>',
+            '</head>',
+            '<body>',
+            '<div class="container">',
+            '  <div class="header">',
+            f'    <h1>📧 Email Nurse Daily Report</h1>',
+            f'    <div class="date">{date_str}</div>',
+            '  </div>',
+        ]
+
+        # Summary section
+        if total == 0:
+            html_parts.append('  <div class="no-activity">No email activity recorded today.</div>')
+        else:
+            html_parts.append('  <div class="summary">')
+            html_parts.append('    <h2>Summary</h2>')
+            html_parts.append('    <div class="stat-grid">')
+            html_parts.append('      <div class="stat-item">')
+            html_parts.append('        <div class="stat-label">Total Processed</div>')
+            html_parts.append(f'        <div class="stat-value">{total}</div>')
+            html_parts.append('      </div>')
+
+            for action, count in sorted(action_counts.items()):
+                action_display = action.replace("_", " ").title()
+                html_parts.append('      <div class="stat-item">')
+                html_parts.append(f'        <div class="stat-label">{action_display}</div>')
+                html_parts.append(f'        <div class="stat-value">{count}</div>')
+                html_parts.append('      </div>')
+
+            if error_count > 0:
+                html_parts.append('      <div class="stat-item">')
+                html_parts.append('        <div class="stat-label">Errors</div>')
+                html_parts.append(f'        <div class="stat-value" style="color: #ff3b30;">{error_count}</div>')
+                html_parts.append('      </div>')
+
+            html_parts.append('    </div>')
+            html_parts.append('  </div>')
+
+        # By Folder section
+        if folder_counts:
+            html_parts.append('  <div class="section">')
+            html_parts.append('    <h3>By Folder</h3>')
+            html_parts.append('    <table>')
+            html_parts.append('      <tr><th>Folder</th><th>Count</th></tr>')
+            for folder, count in sorted(folder_counts.items(), key=lambda x: x[1], reverse=True):
+                html_parts.append(f'      <tr><td>{folder}</td><td><strong>{count}</strong></td></tr>')
+            html_parts.append('    </table>')
+            html_parts.append('  </div>')
+
+        # By Account section
+        if account_counts:
+            html_parts.append('  <div class="section">')
+            html_parts.append('    <h3>By Account</h3>')
+            html_parts.append('    <table>')
+            html_parts.append('      <tr><th>Account</th><th>Count</th></tr>')
+            for account, count in sorted(account_counts.items(), key=lambda x: x[1], reverse=True):
+                html_parts.append(f'      <tr><td>{account}</td><td><strong>{count}</strong></td></tr>')
+            html_parts.append('    </table>')
+            html_parts.append('  </div>')
+
+        # Detailed log section
+        if entries:
+            html_parts.append('  <div class="section">')
+            html_parts.append('    <h3>Detailed Activity Log</h3>')
+
+            for entry in entries:
+                html_parts.extend(self._format_entry_html(entry))
+
+            html_parts.append('  </div>')
+
+        # Footer
+        html_parts.append('  <div class="footer">')
+        html_parts.append('    Generated by Email Nurse')
+        html_parts.append('  </div>')
+        html_parts.append('</div>')
+        html_parts.append('</body>')
+        html_parts.append('</html>')
+
+        return '\n'.join(html_parts)
+
+    def _format_entry_html(self, entry: dict[str, Any]) -> list[str]:
+        """Format a single log entry as HTML."""
+        lines: list[str] = []
+
+        # Parse timestamp
+        timestamp_str = entry.get("timestamp", "")
+        try:
+            timestamp = datetime.fromisoformat(timestamp_str)
+            time_str = timestamp.strftime("%H:%M:%S")
+        except (ValueError, TypeError):
+            time_str = "??:??:??"
+
+        action = entry.get("action", "UNKNOWN").upper()
+        sender = entry.get("sender", "Unknown sender")
+        subject = entry.get("subject", "(no subject)")
+        confidence = entry.get("confidence")
+
+        # Get target folder from details JSON
+        details_str = entry.get("details")
+        target_folder = None
+        if details_str:
+            try:
+                import json
+                details = json.loads(details_str) if isinstance(details_str, str) else details_str
+                target_folder = details.get("folder") or details.get("target_folder")
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        # Determine if error
+        is_error = action in ["ERROR", "SKIP"]
+        entry_class = "log-entry error" if is_error else "log-entry"
+
+        lines.append(f'    <div class="{entry_class}">')
+        lines.append(f'      <div class="log-time">{time_str}</div>')
+
+        if target_folder:
+            lines.append(f'      <div class="log-action">{action} → {target_folder}</div>')
+        else:
+            lines.append(f'      <div class="log-action">{action}</div>')
+
+        lines.append(f'      <div class="log-detail"><strong>From:</strong> {sender}</div>')
+
+        # Truncate subject if too long
+        if len(subject) > 60:
+            subject = subject[:57] + "..."
+        lines.append(f'      <div class="log-detail"><strong>Subject:</strong> {subject}</div>')
+
+        if confidence is not None:
+            lines.append(f'      <div class="log-detail"><strong>Confidence:</strong> {int(confidence * 100)}%</div>')
+
+        lines.append('    </div>')
+
+        return lines
+
     def send_report(
         self,
         to_address: str,
@@ -180,7 +358,12 @@ class DailyReportGenerator:
         from email_nurse.mail.actions import compose_email, send_email_smtp
 
         settings = Settings()
-        report_text = self.generate_report(report_date)
+
+        # Get activity data for both plain text and HTML formatting
+        activity = self.db.get_daily_activity(report_date)
+        report_text = self._format_report(activity)
+        report_html = self._format_report_html(activity)
+
         actual_date = report_date or date.today()
         subject = f"Email Nurse Report - {actual_date.strftime('%b %d, %Y')}"
 
@@ -196,6 +379,7 @@ class DailyReportGenerator:
                 smtp_password=settings.smtp_password,
                 from_address=settings.smtp_from_address or sender_address,
                 use_tls=settings.smtp_use_tls,
+                html_content=report_html,
             )
         else:
             # Fall back to Mail.app

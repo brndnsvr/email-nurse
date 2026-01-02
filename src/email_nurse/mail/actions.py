@@ -572,6 +572,7 @@ def send_email_smtp(
     smtp_password: str,
     from_address: str | None = None,
     use_tls: bool = True,
+    html_content: str | None = None,
 ) -> bool:
     """
     Send email using direct SMTP connection (bypasses Mail.app).
@@ -586,6 +587,7 @@ def send_email_smtp(
         smtp_password: SMTP password (use app-specific password for Gmail).
         from_address: From address (defaults to smtp_username if not specified).
         use_tls: Use STARTTLS for connection (default True).
+        html_content: Optional HTML version of the email body.
 
     Returns:
         True if email was sent successfully, False otherwise.
@@ -605,6 +607,10 @@ def send_email_smtp(
     msg["To"] = to_address
     msg["Subject"] = subject
     msg.set_content(content)
+
+    # Add HTML alternative if provided
+    if html_content:
+        msg.add_alternative(html_content, subtype="html")
 
     try:
         # Connect to SMTP server

@@ -93,6 +93,50 @@ Ollama must be installed and running. See: https://ollama.ai/
 |----------|------|---------|-------------|
 | `EMAIL_NURSE_SYNC_INTERVAL_MINUTES` | int | `5` | Minutes between sync checks (≥1) |
 | `EMAIL_NURSE_PROCESS_INTERVAL_MINUTES` | int | `1` | Minutes between processing runs (≥1) |
+| `EMAIL_NURSE_WATCHER_INTERVAL` | int | `60` | Seconds between watcher processing cycles |
+| `EMAIL_NURSE_WATCHER_CHECK_NEW_INTERVAL` | int | `300` | Seconds between checks for new messages |
+| `EMAIL_NURSE_WATCHER_RUN_ON_START` | bool | `true` | Run immediate scan when watcher starts |
+
+### Daily Reports
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `EMAIL_NURSE_REPORT_ENABLED` | bool | `true` | Enable daily activity reports |
+| `EMAIL_NURSE_REPORT_RECIPIENT` | string | - | Email address to send reports to |
+| `EMAIL_NURSE_REPORT_SENDER` | string | - | Sender email address for reports (must match account) |
+| `EMAIL_NURSE_REPORT_TIME` | string | `21:00` | Time to send daily report (HH:MM, 24-hour format) |
+| `EMAIL_NURSE_REPORT_ACCOUNT` | string | - | Mail.app account to send from (if using Mail.app) |
+
+### SMTP Email Sending
+
+Direct SMTP support allows sending emails without relying on Mail.app configuration. Particularly useful for Gmail and other providers.
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `EMAIL_NURSE_SMTP_ENABLED` | bool | `false` | Use direct SMTP instead of Mail.app |
+| `EMAIL_NURSE_SMTP_HOST` | string | - | SMTP server hostname (e.g., `smtp.gmail.com`) |
+| `EMAIL_NURSE_SMTP_PORT` | int | `587` | SMTP port (587 for STARTTLS, 465 for SSL) |
+| `EMAIL_NURSE_SMTP_USE_TLS` | bool | `true` | Use STARTTLS for connection |
+| `EMAIL_NURSE_SMTP_USERNAME` | string | - | SMTP username (usually your email address) |
+| `EMAIL_NURSE_SMTP_PASSWORD` | string | - | SMTP password or app-specific password |
+| `EMAIL_NURSE_SMTP_FROM_ADDRESS` | string | - | From address (defaults to smtp_username if not set) |
+
+**Gmail SMTP Setup:**
+
+1. Generate an app-specific password at https://myaccount.google.com/apppasswords
+2. Configure environment variables:
+
+```bash
+EMAIL_NURSE_SMTP_ENABLED=true
+EMAIL_NURSE_SMTP_HOST=smtp.gmail.com
+EMAIL_NURSE_SMTP_PORT=587
+EMAIL_NURSE_SMTP_USE_TLS=true
+EMAIL_NURSE_SMTP_USERNAME=you@gmail.com
+EMAIL_NURSE_SMTP_PASSWORD=your_app_password
+EMAIL_NURSE_SMTP_FROM_ADDRESS=you@gmail.com
+```
+
+**Note**: App-specific passwords are required for Gmail accounts with 2-Step Verification enabled.
 
 ### File Paths
 
@@ -516,6 +560,218 @@ export EMAIL_NURSE_SYNC_INTERVAL_MINUTES=5
 
 # Process messages every 1 minute
 export EMAIL_NURSE_PROCESS_INTERVAL_MINUTES=1
+```
+
+## Daily Activity Reports
+
+Email Nurse can automatically send daily HTML reports summarizing all email processing activity.
+
+### Features
+
+- **Beautiful HTML emails** with tables, color-coded entries, and responsive design
+- **Summary statistics** showing total processed, actions taken, and error counts
+- **Breakdown by folder** and **breakdown by account**
+- **Detailed activity log** with timestamps, senders, subjects, and confidence scores
+- **Automatic scheduling** via macOS LaunchAgent
+
+### Configuration
+
+Configure daily reports in your `.env` file:
+
+```bash
+# Enable reports and set recipient
+EMAIL_NURSE_REPORT_ENABLED=true
+EMAIL_NURSE_REPORT_RECIPIENT=you@example.com
+EMAIL_NURSE_REPORT_TIME=21:00  # 9 PM
+
+# Option 1: Use Mail.app (requires proper Mail.app setup)
+EMAIL_NURSE_REPORT_ACCOUNT=iCloud
+EMAIL_NURSE_REPORT_SENDER=you@icloud.com
+
+# Option 2: Use SMTP (recommended - more reliable)
+EMAIL_NURSE_SMTP_ENABLED=true
+EMAIL_NURSE_SMTP_HOST=smtp.gmail.com
+EMAIL_NURSE_SMTP_PORT=587
+EMAIL_NURSE_SMTP_USERNAME=you@gmail.com
+EMAIL_NURSE_SMTP_PASSWORD=your_app_password
+EMAIL_NURSE_SMTP_FROM_ADDRESS=you@gmail.com
+```
+
+### Manual Report Generation
+
+Generate and send a report manually:
+
+```bash
+# Send report for today
+email-nurse autopilot report
+
+# Send report for specific date
+email-nurse autopilot report --date 2024-01-15
+
+# Preview report without sending
+email-nurse autopilot report --preview
+
+# Send to different recipient
+email-nurse autopilot report --to other@example.com
+```
+
+### Scheduled Reports with LaunchAgent
+
+Set up automatic daily reports using macOS LaunchAgent:
+
+1. **Create the LaunchAgent plist** at `~/Library/LaunchAgents/com.bss.email-nurse-report.plist`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.bss.email-nurse-report</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/path/to/email-nurse-report.sh</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>21</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/tmp/email-nurse-report.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/email-nurse-report-error.log</string>
+</dict>
+</plist>
+```
+
+2. **Create the launcher script** at `/path/to/email-nurse-report.sh`:
+
+```bash
+#!/bin/bash
+set -e
+
+export PATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+
+# Load environment from .env file
+if [ -f "$HOME/.config/email-nurse/.env" ]; then
+    set -a
+    source "$HOME/.config/email-nurse/.env"
+    set +a
+fi
+
+# Activate virtual environment
+cd /path/to/email-nurse
+source .venv/bin/activate
+
+# Run report
+uv run email-nurse autopilot report
+```
+
+3. **Load the LaunchAgent**:
+
+```bash
+# Make script executable
+chmod +x /path/to/email-nurse-report.sh
+
+# Load LaunchAgent
+launchctl load ~/Library/LaunchAgents/com.bss.email-nurse-report.plist
+
+# Verify it's loaded
+launchctl list | grep email-nurse-report
+```
+
+4. **Test the setup**:
+
+```bash
+# Trigger immediately for testing
+launchctl start com.bss.email-nurse-report
+
+# Check logs
+tail -f /tmp/email-nurse-report.log
+```
+
+### Report Contents
+
+Each report includes:
+
+1. **Header** - Date and branding
+2. **Summary Section** - Total emails processed, breakdown by action type, error count
+3. **By Folder** - Table showing email count per destination folder
+4. **By Account** - Table showing email count per Mail.app account
+5. **Detailed Activity Log** - Timestamped entries for each processed email with:
+   - Time processed
+   - Action taken (MOVE, ARCHIVE, DELETE, etc.)
+   - Sender
+   - Subject (truncated if long)
+   - AI confidence score (if applicable)
+
+### Troubleshooting Reports
+
+**Report not sending:**
+
+1. Check LaunchAgent is loaded: `launchctl list | grep email-nurse-report`
+2. Check logs: `cat /tmp/email-nurse-report-error.log`
+3. Test manually: `email-nurse autopilot report`
+4. Verify SMTP credentials if using Gmail
+
+**Mail.app authentication issues:**
+
+If using Mail.app and emails fail to send, consider switching to SMTP:
+
+```bash
+# Disable Mail.app, enable SMTP
+EMAIL_NURSE_SMTP_ENABLED=true
+EMAIL_NURSE_SMTP_HOST=smtp.gmail.com
+EMAIL_NURSE_SMTP_USERNAME=you@gmail.com
+EMAIL_NURSE_SMTP_PASSWORD=your_app_password
+```
+
+**Empty reports:**
+
+Reports show "No activity" if no emails were processed that day. This is normal if autopilot didn't run or no emails matched rules.
+
+## Continuous Monitoring (Watcher Mode)
+
+Run email-nurse continuously in the background with automatic processing:
+
+```bash
+# Start watcher (runs indefinitely)
+email-nurse autopilot watch
+
+# Configure intervals via environment variables
+EMAIL_NURSE_WATCHER_INTERVAL=60           # Process every 60 seconds
+EMAIL_NURSE_WATCHER_CHECK_NEW_INTERVAL=300  # Check for new messages every 5 minutes
+EMAIL_NURSE_WATCHER_RUN_ON_START=true      # Run immediately on start
+```
+
+### Watcher LaunchAgent
+
+Set up watcher as a LaunchAgent for automatic startup:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.bss.email-nurse-watcher</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/path/to/launch-autopilot.sh</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/tmp/email-nurse-watcher.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/email-nurse-watcher-error.log</string>
+</dict>
+</plist>
 ```
 
 ## Best Practices

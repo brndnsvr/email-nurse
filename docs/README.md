@@ -178,6 +178,34 @@ email-nurse autopilot reject <id>
 email-nurse autopilot history --limit 20
 ```
 
+### Continuous Monitoring (Watcher Mode)
+
+```bash
+# Start continuous monitoring
+email-nurse autopilot watch
+
+# Watcher runs indefinitely with configurable intervals
+# See Configuration Guide for environment variables
+```
+
+### Daily Activity Reports
+
+```bash
+# Send daily HTML report
+email-nurse autopilot report
+
+# Send report for specific date
+email-nurse autopilot report --date 2024-01-15
+
+# Preview report without sending
+email-nurse autopilot report --preview
+
+# Send to different recipient
+email-nurse autopilot report --to other@example.com
+```
+
+See [Configuration Guide - Daily Reports](./configuration.md#daily-activity-reports) for setup instructions.
+
 ### Other Autopilot Commands
 
 ```bash

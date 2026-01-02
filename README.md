@@ -13,6 +13,9 @@ AI-powered email management and automation for macOS Mail.app.
 - **Multi-Account Support**: Process emails from multiple accounts to a central location
 - **Per-Account Folder Policies**: Configure auto-create for iCloud, queue-for-manual for Exchange
 - **Per-Account Logging**: Separate log files per email account with automatic rotation
+- **Daily Activity Reports**: Beautiful HTML email reports summarizing all email processing activity
+- **Direct SMTP Support**: Send emails via SMTP (Gmail, etc.) without relying on Mail.app configuration
+- **Continuous Monitoring**: Watcher mode for real-time email processing with configurable intervals
 - **Reminders Integration**: View and manage macOS Reminders.app lists
 - **Flexible Actions**: Move, delete, archive, flag, reply, forward emails automatically
 
@@ -61,6 +64,12 @@ email-nurse autopilot run --dry-run -v
 # Run autopilot for real
 email-nurse autopilot run -v
 
+# Start continuous monitoring (watcher mode)
+email-nurse autopilot watch
+
+# Send daily activity report
+email-nurse autopilot report
+
 # View reminders
 email-nurse reminders lists
 ```
@@ -103,6 +112,18 @@ OPENAI_API_KEY=sk-...
 # Local models
 EMAIL_NURSE_OLLAMA_HOST=http://localhost:11434
 EMAIL_NURSE_OLLAMA_MODEL=llama3.2
+
+# Daily Reports
+EMAIL_NURSE_REPORT_RECIPIENT=you@example.com
+EMAIL_NURSE_REPORT_TIME=21:00
+
+# SMTP Email Sending (optional - bypasses Mail.app)
+EMAIL_NURSE_SMTP_ENABLED=true
+EMAIL_NURSE_SMTP_HOST=smtp.gmail.com
+EMAIL_NURSE_SMTP_PORT=587
+EMAIL_NURSE_SMTP_USERNAME=you@gmail.com
+EMAIL_NURSE_SMTP_PASSWORD=your_app_password
+EMAIL_NURSE_SMTP_FROM_ADDRESS=you@gmail.com
 ```
 
 ## Development
