@@ -6,7 +6,7 @@ This document outlines planned features and integrations for email-nurse.
 
 ## Apple Reminders Integration
 
-**Status**: In Progress
+**Status**: ✅ Complete (Phase 1.0 + 1.2)
 **Priority**: High
 
 ### Overview
@@ -15,7 +15,7 @@ Add AppleScript integration for Apple Reminders app, enabling:
 - Creating reminders linked back to emails via `message://` URL scheme
 - Viewing and managing reminders from the CLI
 
-### Phase 1.0: Read Operations
+### Phase 1.0: Read Operations ✅
 
 **Data Model**:
 ```python
@@ -42,20 +42,22 @@ email-nurse reminders show <list>       # Show reminders in a list
 email-nurse reminders incomplete        # All incomplete reminders
 ```
 
-### Phase 1.2: Write Operations
+### Phase 1.2: Write Operations ✅
 
-**Functions**:
+**Functions** (implemented in `reminders/actions.py`):
 ```python
-def create_reminder(name, list_name="Reminders", body=None, due_date=None) -> str
-def create_reminder_from_email(email_message_id, name, list_name, due_date) -> str
-def complete_reminder(reminder_id) -> bool
-def delete_reminder(reminder_id) -> bool
+def create_reminder(name, list_name="Reminders", body=None, due_date=None, priority=0) -> str
+def create_reminder_from_email(message_id, name, list_name, due_date, subject, sender) -> str
+def complete_reminder(reminder_id, list_name) -> bool
+def uncomplete_reminder(reminder_id, list_name) -> bool
+def delete_reminder(reminder_id, list_name) -> bool
 ```
 
 **CLI Commands**:
 ```bash
-email-nurse reminders create <name>     # Create reminder
-email-nurse reminders complete <id>     # Mark complete
+email-nurse reminders create <name> [--list] [--body] [--due] [--priority]
+email-nurse reminders complete <id> --list <list>
+email-nurse reminders delete <id> --list <list> [--force]
 ```
 
 ### Known Limitations
@@ -155,14 +157,14 @@ Clicking the `message://` URL in Reminders or Calendar opens the email in Mail.a
 
 ## Implementation Order
 
-1. **Shared infrastructure** - `applescript/` module (extract from mail/)
-2. **Reminders read** - lists.py, reminders.py
-3. **Reminders CLI** - list, show, incomplete commands
-4. **Calendar read** - calendars.py, events.py
-5. **Calendar CLI** - list, events, today commands
-6. **Reminders write** - actions.py (create, complete)
-7. **Calendar write** - actions.py (parse_sentence)
-8. **Tests** - Unit tests for parsing, integration tests for live calls
+1. ✅ **Shared infrastructure** - `applescript/` module (extract from mail/)
+2. ✅ **Reminders read** - lists.py, reminders.py
+3. ✅ **Reminders CLI** - list, show, incomplete commands
+4. ⬜ **Calendar read** - calendars.py, events.py
+5. ⬜ **Calendar CLI** - list, events, today commands
+6. ✅ **Reminders write** - actions.py (create, complete, delete)
+7. ⬜ **Calendar write** - actions.py (parse_sentence)
+8. ⬜ **Tests** - Unit tests for parsing, integration tests for live calls
 
 ---
 
