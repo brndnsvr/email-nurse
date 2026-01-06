@@ -70,7 +70,7 @@ email-nurse reminders delete <id> --list <list> [--force]
 
 ## Apple Calendar Integration
 
-**Status**: Planned
+**Status**: ✅ Complete (Phase 1.0 + 1.2)
 **Priority**: Medium
 
 ### Overview
@@ -79,15 +79,12 @@ Add AppleScript integration for Apple Calendar app, enabling:
 - Creating calendar events linked back to emails
 - Viewing upcoming events from the CLI
 
-### Critical Limitation
+### Implementation Notes
 
-**As of macOS Sequoia, creating/modifying calendar events via AppleScript is BROKEN.**
+**Direct event creation works** on this system despite reports of issues on macOS Sequoia.
+The `parse sentence` command (mentioned in some workarounds) is actually a Fantastical feature, not Calendar.app.
 
-Apple confirmed: despite the dictionary showing it, direct event creation is not actually supported.
-
-**Workaround**: Use `parse sentence` command (natural language) instead of direct `make new event`.
-
-### Phase 1.0: Read Operations
+### Phase 1.0: Read Operations ✅
 
 **Data Model**:
 ```python
@@ -102,12 +99,14 @@ class CalendarEvent:
     all_day: bool
     calendar_name: str
     url: str | None              # Can contain message:// link
+    recurrence_rule: str | None  # Recurrence info (read-only)
 ```
 
-**Functions**:
+**Functions** (implemented in `calendar/calendars.py` and `calendar/events.py`):
 - `get_calendars() -> list[Calendar]` - Get all calendars
-- `get_events(calendar?, start_date?, end_date?) -> list[CalendarEvent]`
-- `get_events_today() -> list[CalendarEvent]`
+- `get_calendar_names() -> list[str]` - Get calendar names (fast)
+- `get_events(calendar?, start_date?, end_date?, limit?) -> list[CalendarEvent]`
+- `get_events_today(calendar?) -> list[CalendarEvent]`
 
 **CLI Commands**:
 ```bash
@@ -116,26 +115,25 @@ email-nurse calendar events             # Upcoming events (30 days)
 email-nurse calendar today              # Today's events
 ```
 
-### Phase 1.2: Write Operations
+### Phase 1.2: Write Operations ✅
 
-**Functions**:
+**Functions** (implemented in `calendar/actions.py`):
 ```python
-def create_event_parse_sentence(sentence, calendar_name=None) -> bool
-    # Example: "Meeting tomorrow at 3pm for 1 hour"
-
-def create_event_direct(...) -> str | None  # May fail on Sequoia
+def create_event(summary, start_date, end_date?, calendar_name?, location?, description?, all_day?) -> str
+def create_event_from_email(summary, start_date, message_id, calendar_name?, end_date?, subject?, sender?) -> str
+def delete_event(event_id, calendar_name) -> bool
 ```
 
 **CLI Commands**:
 ```bash
-email-nurse calendar create <sentence>  # Natural language event creation
+email-nurse calendar create <summary> --start <datetime> [--end] [--calendar] [--location] [--all-day]
 ```
 
 ### Known Limitations
 
-- **Direct event creation BROKEN** on macOS Sequoia
-- **Recurring events** have limited AppleScript support
-- Must use `parse sentence` workaround for reliability
+- **Calendar.app doesn't expose uid** for calendars - uses `name` as identifier
+- **Recurring events** have limited AppleScript support (read-only)
+- **Performance can be slow** when querying many calendars - use 90s timeout
 
 ---
 
@@ -160,10 +158,10 @@ Clicking the `message://` URL in Reminders or Calendar opens the email in Mail.a
 1. ✅ **Shared infrastructure** - `applescript/` module (extract from mail/)
 2. ✅ **Reminders read** - lists.py, reminders.py
 3. ✅ **Reminders CLI** - list, show, incomplete commands
-4. ⬜ **Calendar read** - calendars.py, events.py
-5. ⬜ **Calendar CLI** - list, events, today commands
+4. ✅ **Calendar read** - calendars.py, events.py
+5. ✅ **Calendar CLI** - list, events, today commands
 6. ✅ **Reminders write** - actions.py (create, complete, delete)
-7. ⬜ **Calendar write** - actions.py (parse_sentence)
+7. ✅ **Calendar write** - actions.py (create_event, delete_event)
 8. ⬜ **Tests** - Unit tests for parsing, integration tests for live calls
 
 ---
