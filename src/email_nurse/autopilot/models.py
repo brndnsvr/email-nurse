@@ -47,6 +47,32 @@ class AutopilotDecision(BaseModel):
     forward_to: list[str] | None = Field(
         default=None, description="Email addresses for forward actions"
     )
+    # Reminder fields (for CREATE_REMINDER action)
+    reminder_name: str | None = Field(
+        default=None, description="Reminder title/name"
+    )
+    reminder_due: datetime | None = Field(
+        default=None, description="Due date for the reminder"
+    )
+    reminder_list: str | None = Field(
+        default=None, description="Target reminder list (default: Reminders)"
+    )
+    # Calendar event fields (for CREATE_EVENT action)
+    event_summary: str | None = Field(
+        default=None, description="Calendar event title"
+    )
+    event_start: datetime | None = Field(
+        default=None, description="Event start date/time"
+    )
+    event_end: datetime | None = Field(
+        default=None, description="Event end date/time (optional)"
+    )
+    event_calendar: str | None = Field(
+        default=None, description="Target calendar (default: Calendar)"
+    )
+    event_all_day: bool = Field(
+        default=False, description="Whether this is an all-day event"
+    )
 
     @property
     def is_outbound(self) -> bool:
@@ -57,6 +83,11 @@ class AutopilotDecision(BaseModel):
     def is_destructive(self) -> bool:
         """Check if this action is destructive (hard to undo)."""
         return self.action == EmailAction.DELETE
+
+    @property
+    def is_pim_action(self) -> bool:
+        """Check if this action creates a PIM (Personal Information Manager) item."""
+        return self.action in (EmailAction.CREATE_REMINDER, EmailAction.CREATE_EVENT)
 
 
 class PendingAction(BaseModel):

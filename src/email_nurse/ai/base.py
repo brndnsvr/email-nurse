@@ -24,6 +24,8 @@ class EmailAction(str, Enum):
     REPLY = "reply"
     FORWARD = "forward"
     IGNORE = "ignore"
+    CREATE_REMINDER = "create_reminder"
+    CREATE_EVENT = "create_event"
 
 
 class EmailClassification(BaseModel):
