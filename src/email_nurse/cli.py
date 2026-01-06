@@ -1607,5 +1607,114 @@ def reminders_incomplete(
     console.print(table)
 
 
+@reminders_app.command("create")
+def reminders_create(
+    name: Annotated[str, typer.Argument(help="Reminder title")],
+    list_name: Annotated[str, typer.Option("--list", "-l", help="List name")] = "Reminders",
+    body: Annotated[str, typer.Option("--body", "-b", help="Notes/body text")] = "",
+    due: Annotated[str | None, typer.Option("--due", "-d", help="Due date (YYYY-MM-DD or YYYY-MM-DD HH:MM)")] = None,
+    priority: Annotated[int, typer.Option("--priority", "-p", help="Priority: 0=none, 1=high, 5=medium, 9=low")] = 0,
+) -> None:
+    """Create a new reminder.
+
+    Examples:
+        email-nurse reminders create "Call Bob"
+        email-nurse reminders create "Review report" --list Work --due 2025-01-15
+        email-nurse reminders create "Urgent task" -l Work -p 1
+    """
+    from datetime import datetime
+
+    from email_nurse.reminders import create_reminder
+    from email_nurse.reminders.lists import RemindersAppNotRunningError
+
+    # Parse due date if provided
+    due_date = None
+    if due:
+        try:
+            if " " in due:
+                due_date = datetime.strptime(due, "%Y-%m-%d %H:%M")
+            else:
+                due_date = datetime.strptime(due, "%Y-%m-%d")
+        except ValueError:
+            console.print(f"[red]Error: Invalid date format '{due}'. Use YYYY-MM-DD or YYYY-MM-DD HH:MM[/red]")
+            raise typer.Exit(1)
+
+    try:
+        reminder_id = create_reminder(
+            name=name,
+            list_name=list_name,
+            body=body,
+            due_date=due_date,
+            priority=priority,
+        )
+        console.print(f"[green]✓ Created reminder in '{list_name}'[/green]")
+        console.print(f"  ID: [dim]{reminder_id}[/dim]")
+    except RemindersAppNotRunningError:
+        console.print("[red]Error: Reminders.app is not running.[/red]")
+        raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"[red]Error creating reminder:[/red] {e}")
+        raise typer.Exit(1)
+
+
+@reminders_app.command("complete")
+def reminders_complete(
+    reminder_id: Annotated[str, typer.Argument(help="Reminder ID")],
+    list_name: Annotated[str, typer.Option("--list", "-l", help="List containing the reminder")] = "Reminders",
+) -> None:
+    """Mark a reminder as completed.
+
+    The reminder ID can be found using 'reminders show <list> --verbose'.
+
+    Example:
+        email-nurse reminders complete "x-apple-reminder://ABC123" --list Work
+    """
+    from email_nurse.reminders import complete_reminder
+    from email_nurse.reminders.lists import RemindersAppNotRunningError
+
+    try:
+        complete_reminder(reminder_id, list_name)
+        console.print(f"[green]✓ Marked reminder as completed[/green]")
+    except RemindersAppNotRunningError:
+        console.print("[red]Error: Reminders.app is not running.[/red]")
+        raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"[red]Error completing reminder:[/red] {e}")
+        raise typer.Exit(1)
+
+
+@reminders_app.command("delete")
+def reminders_delete(
+    reminder_id: Annotated[str, typer.Argument(help="Reminder ID")],
+    list_name: Annotated[str, typer.Option("--list", "-l", help="List containing the reminder")] = "Reminders",
+    force: Annotated[bool, typer.Option("--force", "-f", help="Skip confirmation")] = False,
+) -> None:
+    """Delete a reminder permanently.
+
+    The reminder ID can be found using 'reminders show <list> --verbose'.
+
+    Example:
+        email-nurse reminders delete "x-apple-reminder://ABC123" --list Work
+    """
+    from email_nurse.reminders import delete_reminder
+    from email_nurse.reminders.lists import RemindersAppNotRunningError
+
+    if not force:
+        confirm = typer.confirm("Are you sure you want to delete this reminder?")
+        if not confirm:
+            console.print("[yellow]Cancelled[/yellow]")
+            raise typer.Exit(0)
+
+    try:
+        delete_reminder(reminder_id, list_name)
+        console.print(f"[green]✓ Deleted reminder[/green]")
+    except RemindersAppNotRunningError:
+        console.print("[red]Error: Reminders.app is not running.[/red]")
+        raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"[red]Error deleting reminder:[/red] {e}")
+        raise typer.Exit(1)
+
+
 if __name__ == "__main__":
     app()

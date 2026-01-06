@@ -511,6 +511,22 @@ chmod +x "$BIN_DIR/email-nurse-watcher.sh"
 success "Launch scripts installed"
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Step 5b: Install Management Scripts
+# ─────────────────────────────────────────────────────────────────────────────
+
+info "Installing management scripts..."
+
+# Copy management scripts from repo
+for script in keychain.sh doctor.sh mode.sh; do
+    if [[ -f "$REPO_DIR/scripts/$script" ]]; then
+        cp "$REPO_DIR/scripts/$script" "$BIN_DIR/email-nurse-${script%.sh}"
+        chmod +x "$BIN_DIR/email-nurse-${script%.sh}"
+    fi
+done
+
+success "Management scripts installed"
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Step 6: Install LaunchAgent
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -645,27 +661,31 @@ echo "  Install:     ${CYAN}$INSTALL_BASE/current${NC}"
 echo "  Config:      ${CYAN}$CONFIG_DIR${NC}"
 echo "  Logs:        ${CYAN}$LOG_DIR/email-nurse.log${NC}"
 echo ""
-echo "  ${BOLD}Commands:${NC}"
-echo "    View logs:     ${CYAN}~/.local/bin/email-nurse-logs.sh${NC}"
-echo "    Run manually:  ${CYAN}~/.local/bin/email-nurse-autopilot.sh${NC}"
-echo "    Check status:  ${CYAN}launchctl list | grep email-nurse${NC}"
+echo "  ${BOLD}Management Commands:${NC}"
+echo "    ${CYAN}email-nurse-doctor${NC}    Health check and diagnostics"
+echo "    ${CYAN}email-nurse-mode${NC}      Switch between interval/watcher modes"
+echo "    ${CYAN}email-nurse-keychain${NC}  Manage API keys in Keychain"
+echo "    ${CYAN}email-nurse-logs${NC}      Interactive log viewer"
 echo ""
 echo "  ${BOLD}Trigger Modes:${NC}"
 echo ""
 echo "    ${YELLOW}Interval Mode (default - currently active):${NC}"
 echo "      Runs every 9 minutes when Mail.app is open"
-echo "      LaunchAgent: ${CYAN}$PLIST_NAME${NC}"
 echo ""
-echo "    ${YELLOW}Watcher Mode (hybrid triggers - installed but not active):${NC}"
-echo "      Polls inbox every 30s for new messages + runs every 10min"
-echo "      Triggers immediately when new mail arrives"
-echo "      LaunchAgent: ${CYAN}$WATCHER_PLIST_NAME${NC}"
+echo "    ${YELLOW}Watcher Mode (hybrid triggers - recommended):${NC}"
+echo "      Polls inbox every 30s + triggers immediately on new mail"
+echo "      Switch with: ${CYAN}email-nurse-mode watcher${NC}"
 echo ""
-echo "    ${BOLD}To switch to Watcher Mode:${NC}"
-echo "      ${CYAN}launchctl unload ~/Library/LaunchAgents/$PLIST_NAME${NC}"
-echo "      ${CYAN}launchctl load ~/Library/LaunchAgents/$WATCHER_PLIST_NAME${NC}"
+
+# Migrate API keys if found in .env
+if [[ -f "$CONFIG_DIR/.env" ]] && grep -q "API_KEY" "$CONFIG_DIR/.env" 2>/dev/null; then
+    echo "  ${YELLOW}⚠ API keys found in .env file${NC}"
+    echo "    Run ${CYAN}email-nurse-keychain migrate${NC} to move to Keychain"
+    echo ""
+fi
+
+# Run doctor check
+echo "  ${BOLD}Running health check...${NC}"
 echo ""
-echo "    ${BOLD}To switch back to Interval Mode:${NC}"
-echo "      ${CYAN}launchctl unload ~/Library/LaunchAgents/$WATCHER_PLIST_NAME${NC}"
-echo "      ${CYAN}launchctl load ~/Library/LaunchAgents/$PLIST_NAME${NC}"
+"$BIN_DIR/email-nurse-doctor" 2>/dev/null || true
 echo ""
