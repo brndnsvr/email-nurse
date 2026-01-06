@@ -75,6 +75,46 @@ class AutopilotEngine:
         # Track folders queued for creation during this run (for notifications)
         self._new_pending_folders: dict[tuple[str, str], list[dict]] = {}  # (folder, account) -> messages
 
+    def _build_pim_context(self) -> str:
+        """Build context about today's calendar and reminders for AI.
+
+        Returns:
+            String containing today's events and pending reminders, or empty if unavailable.
+        """
+        context_parts = []
+
+        # Get today's calendar events
+        try:
+            from email_nurse.calendar import get_events_today
+
+            events = get_events_today()
+            if events:
+                event_lines = []
+                for e in events[:10]:  # Limit to 10 events
+                    time_str = e.start_date.strftime("%H:%M") if not e.all_day else "All day"
+                    event_lines.append(f"  - {time_str}: {e.summary}")
+                context_parts.append("TODAY'S CALENDAR:\n" + "\n".join(event_lines))
+        except Exception:
+            pass  # Calendar unavailable, continue without
+
+        # Get pending reminders
+        try:
+            from email_nurse.reminders import get_reminders
+
+            reminders = get_reminders(completed=False)
+            if reminders:
+                reminder_lines = []
+                for r in reminders[:10]:  # Limit to 10 reminders
+                    due_str = r.due_date.strftime("%Y-%m-%d") if r.due_date else "No due date"
+                    reminder_lines.append(f"  - [{due_str}] {r.name}")
+                context_parts.append("PENDING REMINDERS:\n" + "\n".join(reminder_lines))
+        except Exception:
+            pass  # Reminders unavailable, continue without
+
+        if context_parts:
+            return "\n\n## CURRENT CONTEXT (for your awareness)\n" + "\n\n".join(context_parts)
+        return ""
+
     def _load_mailbox_cache(self, account: str | None = None) -> None:
         """Load mailbox names from disk cache or Mail.app.
 
@@ -456,7 +496,13 @@ class AutopilotEngine:
 
         # No quick rule matched - use AI
         try:
-            decision = await self.ai.autopilot_classify(email, self.config.instructions)
+            # Build enriched instructions with PIM context
+            enriched_instructions = self.config.instructions
+            pim_context = self._build_pim_context()
+            if pim_context:
+                enriched_instructions = f"{self.config.instructions}\n{pim_context}"
+
+            decision = await self.ai.autopilot_classify(email, enriched_instructions)
             folder_str = f" -> {decision.target_folder}" if decision.target_folder else ""
             logger.info(
                 f"AI decision: {decision.action.value.upper()}{folder_str} "
@@ -1076,6 +1122,45 @@ class AutopilotEngine:
 
                 case EmailAction.IGNORE:
                     pass  # No action needed
+
+                case EmailAction.CREATE_REMINDER:
+                    if decision.reminder_name:
+                        from email_nurse.reminders import create_reminder_from_email
+
+                        create_reminder_from_email(
+                            message_id=email.id,
+                            name=decision.reminder_name,
+                            list_name=decision.reminder_list or "Reminders",
+                            due_date=decision.reminder_due,
+                            subject=email.subject,
+                            sender=email.sender,
+                        )
+                    else:
+                        return ProcessResult(
+                            message_id=email.id,
+                            success=False,
+                            error="CREATE_REMINDER requires reminder_name",
+                        )
+
+                case EmailAction.CREATE_EVENT:
+                    if decision.event_summary and decision.event_start:
+                        from email_nurse.calendar import create_event_from_email
+
+                        create_event_from_email(
+                            summary=decision.event_summary,
+                            start_date=decision.event_start,
+                            message_id=email.id,
+                            calendar_name=decision.event_calendar or "Calendar",
+                            end_date=decision.event_end,
+                            subject=email.subject,
+                            sender=email.sender,
+                        )
+                    else:
+                        return ProcessResult(
+                            message_id=email.id,
+                            success=False,
+                            error="CREATE_EVENT requires event_summary and event_start",
+                        )
 
             # Mark as processed and log
             self._mark_processed(email, decision)

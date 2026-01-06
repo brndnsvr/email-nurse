@@ -2,6 +2,7 @@
 
 import json
 import os
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from email_nurse.ai.base import AIProvider, EmailAction, EmailClassification
@@ -83,6 +84,8 @@ Available actions:
 - reply: Generate and send a reply (requires reply_content)
 - forward: Forward to addresses (requires forward_to list)
 - ignore: Take no action, leave email as-is
+- create_reminder: Create a reminder in Apple Reminders linked to this email
+- create_event: Create a calendar event in Apple Calendar linked to this email
 
 CRITICAL GUIDELINES:
 1. Follow the user's instructions precisely - they define your behavior
@@ -98,6 +101,17 @@ CRITICAL GUIDELINES:
 7. Flag emails that seem important but don't match any instruction
 8. Security-sensitive emails (passwords, 2FA, banking) should be left alone
 
+REMINDER/CALENDAR GUIDELINES:
+- Use create_reminder for: due dates, deadlines, follow-up requests, action items
+  Example: "Payment due by Jan 15" → reminder with due date
+  Example: "Can you review this?" → reminder to follow up
+- Use create_event for: meetings, conferences, significant events WITH specific dates/times
+  Example: "Our conference is March 10-12" → calendar event
+  Example: "Let's meet Thursday at 2pm" → calendar event
+- Do NOT use create_event for calendar invites (those are handled by Mail.app)
+- All reminders/events will automatically link back to the source email
+- When extracting dates, use ISO 8601 format: "2025-01-15T14:00:00"
+
 Respond with ONLY a valid JSON object (no markdown, no explanation):
 {
     "action": "action_name",
@@ -106,7 +120,14 @@ Respond with ONLY a valid JSON object (no markdown, no explanation):
     "reasoning": "brief explanation",
     "target_folder": "FolderName",
     "reply_content": "full reply text if action is reply",
-    "forward_to": ["email@example.com"]
+    "forward_to": ["email@example.com"],
+    "reminder_name": "Reminder title",
+    "reminder_due": "2025-01-15T14:00:00",
+    "reminder_list": "Reminders",
+    "event_summary": "Event title",
+    "event_start": "2025-01-15T14:00:00",
+    "event_end": "2025-01-15T15:00:00",
+    "event_all_day": false
 }"""
 
 
@@ -254,6 +275,19 @@ Based on the user's instructions above, decide what action to take for this emai
         try:
             data = self._parse_json_response(response_text)
 
+            # Parse datetime fields if present
+            reminder_due = None
+            if data.get("reminder_due"):
+                reminder_due = datetime.fromisoformat(data["reminder_due"].replace("Z", "+00:00"))
+
+            event_start = None
+            if data.get("event_start"):
+                event_start = datetime.fromisoformat(data["event_start"].replace("Z", "+00:00"))
+
+            event_end = None
+            if data.get("event_end"):
+                event_end = datetime.fromisoformat(data["event_end"].replace("Z", "+00:00"))
+
             return AutopilotDecision(
                 action=EmailAction(data.get("action", "ignore")),
                 confidence=float(data.get("confidence", 0.5)),
@@ -263,6 +297,16 @@ Based on the user's instructions above, decide what action to take for this emai
                 target_account=data.get("target_account"),
                 reply_content=data.get("reply_content"),
                 forward_to=data.get("forward_to"),
+                # Reminder fields
+                reminder_name=data.get("reminder_name"),
+                reminder_due=reminder_due,
+                reminder_list=data.get("reminder_list"),
+                # Event fields
+                event_summary=data.get("event_summary"),
+                event_start=event_start,
+                event_end=event_end,
+                event_calendar=data.get("event_calendar"),
+                event_all_day=data.get("event_all_day", False),
             )
         except (json.JSONDecodeError, ValueError, KeyError) as e:
             return AutopilotDecision(
