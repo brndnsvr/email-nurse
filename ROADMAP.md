@@ -260,39 +260,17 @@ Most parsing can be tested without mocking AppleScript - pass mock output string
 
 ---
 
-## Planned: AI Behavior Tuning
+## AI Behavior Tuning
 
-**Status**: ⬜ Planned
+**Status**: ✅ Complete
 **Priority**: High (quick win)
 
 ### Overview
 
-Add specific guidance to `autopilot.yaml` instructions for when AI should create reminders vs calendar events.
-
-### Suggested Instructions
-
-```yaml
-## Calendar & Reminders Extraction
-
-When processing emails, extract actionable items:
-
-### Create Reminders For:
-- Explicit deadlines: "due by", "deadline", "by Friday", "before EOD"
-- Follow-up requests: "can you review", "please send", "let me know"
-- Action items assigned to user: "you need to", "please handle"
-- Invoice/payment due dates
-
-### Create Calendar Events For:
-- Meeting proposals: "let's meet", "schedule a call", "can we sync"
-- Conference/event mentions with dates: "conference March 10-12"
-- Webinars/training with specific times
-- Do NOT create events for calendar invites (Mail.app handles those)
-
-### Do NOT Extract:
-- Vague deadlines without dates ("soon", "ASAP")
-- Historical references ("we met last Tuesday")
-- Newsletter event listings (bulk/marketing)
-```
+Added section 9 to `autopilot.yaml` instructions with guidance for reminders:
+- Create reminders for deadlines, follow-ups, action items, specific senders
+- Exclusions for certain domains (support tickets) and vague deadlines
+- Calendar events disabled (user prefers manual control)
 
 **Location**: `deploy/config/autopilot.yaml`
 
