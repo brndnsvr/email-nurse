@@ -219,14 +219,14 @@ The AI receives today's calendar and pending reminders as context when classifyi
 
 ---
 
-## Planned: Unit Tests
+## Unit Tests
 
-**Status**: ⬜ Planned
+**Status**: ✅ Complete
 **Priority**: Medium
 
 ### Overview
 
-Add comprehensive unit tests for Calendar and Reminders modules. Currently 29 tests exist for rules/conditions; Calendar/Reminders have zero coverage.
+Comprehensive unit tests for Calendar and Reminders modules. Test count: 29 → 226 (+197 tests).
 
 ### High-Priority Test Targets
 
