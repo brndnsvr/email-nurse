@@ -192,3 +192,200 @@ src/email_nurse/
 │
 └── cli.py                       # Extended with reminders_app, calendar_app
 ```
+
+---
+
+## AI-Driven Calendar/Reminders Integration
+
+**Status**: ✅ Complete
+**Priority**: High
+
+### Overview
+
+The AI autopilot can now create Calendar events and Reminders based on email content.
+
+**New EmailAction Types**:
+- `create_reminder` - Extract deadlines, follow-ups, action items
+- `create_event` - Extract meetings, conferences, events with dates
+
+**Context Enrichment**:
+The AI receives today's calendar and pending reminders as context when classifying emails, enabling smarter decisions.
+
+**Files Modified**:
+- `ai/base.py` - Added EmailAction enum values
+- `ai/claude.py` - Updated prompt, datetime parsing
+- `autopilot/models.py` - Added reminder/event fields to AutopilotDecision
+- `autopilot/engine.py` - Added `_build_pim_context()`, action execution
+
+---
+
+## Planned: Unit Tests
+
+**Status**: ⬜ Planned
+**Priority**: Medium
+
+### Overview
+
+Add comprehensive unit tests for Calendar and Reminders modules. Currently 29 tests exist for rules/conditions; Calendar/Reminders have zero coverage.
+
+### High-Priority Test Targets
+
+| Function | Module | Why Critical |
+|----------|--------|-------------|
+| `_parse_date()` | Both | Handles 15+ AppleScript date formats |
+| Separator parsing | Both | ASCII `\x1e`/`\x1f` record/unit splitting |
+| `email_link` property | Both | Regex extraction of `message://` URLs |
+| `priority_label` property | Reminders | Priority int → label boundary cases |
+| `duration_str` property | Calendar | Time delta formatting |
+
+### Test Architecture
+
+```
+tests/
+├── test_calendar/
+│   ├── test_events_parsing.py    # Date parsing, separator parsing
+│   ├── test_calendar_event.py    # Dataclass properties
+│   └── test_actions.py           # Event creation (mocked)
+├── test_reminders/
+│   ├── test_reminders_parsing.py # Date parsing, priority mapping
+│   ├── test_reminder.py          # Dataclass properties
+│   └── test_actions.py           # Reminder creation (mocked)
+```
+
+### Key Insight
+
+Most parsing can be tested without mocking AppleScript - pass mock output strings directly to parsing functions.
+
+**Estimated**: 100-150 new tests
+
+---
+
+## Planned: AI Behavior Tuning
+
+**Status**: ⬜ Planned
+**Priority**: High (quick win)
+
+### Overview
+
+Add specific guidance to `autopilot.yaml` instructions for when AI should create reminders vs calendar events.
+
+### Suggested Instructions
+
+```yaml
+## Calendar & Reminders Extraction
+
+When processing emails, extract actionable items:
+
+### Create Reminders For:
+- Explicit deadlines: "due by", "deadline", "by Friday", "before EOD"
+- Follow-up requests: "can you review", "please send", "let me know"
+- Action items assigned to user: "you need to", "please handle"
+- Invoice/payment due dates
+
+### Create Calendar Events For:
+- Meeting proposals: "let's meet", "schedule a call", "can we sync"
+- Conference/event mentions with dates: "conference March 10-12"
+- Webinars/training with specific times
+- Do NOT create events for calendar invites (Mail.app handles those)
+
+### Do NOT Extract:
+- Vague deadlines without dates ("soon", "ASAP")
+- Historical references ("we met last Tuesday")
+- Newsletter event listings (bulk/marketing)
+```
+
+**Location**: `deploy/config/autopilot.yaml`
+
+---
+
+## Planned: Secondary Actions
+
+**Status**: ⬜ Planned
+**Priority**: Medium
+
+### Overview
+
+Enable AI to recommend multiple actions per email (e.g., "archive AND create reminder").
+
+### Current State
+
+- Quick Rules already support `actions: [move, mark_read]` (list)
+- AI decisions only support single `action` field
+- Infrastructure exists for action chaining
+
+### Implementation Options
+
+**Option A - Secondary Action Field** (Simpler):
+```python
+class AutopilotDecision(BaseModel):
+    action: EmailAction              # Primary action
+    secondary_action: EmailAction | None = None
+```
+
+**Option B - Full Action List** (More Flexible):
+```python
+class AutopilotDecision(BaseModel):
+    actions: list[EmailAction]       # Multiple actions in order
+```
+
+### Changes Required
+
+1. Update `AutopilotDecision` model
+2. Update `AUTOPILOT_SYSTEM_PROMPT` to request secondary actions
+3. Modify `_execute_action()` to loop through actions
+4. Handle partial failure scenarios
+
+### Common Combinations
+
+- `archive` + `create_reminder` - Archive but remind to follow up
+- `move` + `mark_read` - Sort and mark read
+- `create_event` + `archive` - Extract event, archive original
+
+---
+
+## Planned: Daily Digest Enhancement
+
+**Status**: ⬜ Planned
+**Priority**: Medium
+
+### Overview
+
+Enhance daily email reports to include today's schedule and pending reminders.
+
+### Current State
+
+`DailyReportGenerator` creates HTML/text reports showing:
+- Actions taken (move, archive, delete counts)
+- Folder breakdown
+- Account breakdown
+- Activity log
+
+### New Sections to Add
+
+**Today's Schedule**:
+- List today's calendar events (time, summary)
+- Data source: `get_events_today()`
+
+**Pending Reminders**:
+- List incomplete reminders (due date, name)
+- Highlight overdue items in red
+- Data source: `get_reminders(completed=False)`
+
+**PIM Actions Taken**:
+- List reminders/events created by autopilot today
+- Data source: `audit_log` with action=create_reminder/create_event
+
+**Location**: `src/email_nurse/autopilot/reports.py`
+
+---
+
+## Future Ideas (Parking Lot)
+
+Potential enhancements for future consideration:
+
+- **Smart Duplicate Detection** - Check if reminder/event already exists before creating
+- **Recurring Pattern Learning** - Learn from user's manual corrections
+- **Priority Inference** - Set reminder priority based on email urgency signals
+- **Calendar Conflict Detection** - Warn if proposed event conflicts with existing
+- **Snooze Integration** - Support snoozing reminders via CLI
+- **Natural Language Dates** - Parse "next Tuesday" style relative dates
