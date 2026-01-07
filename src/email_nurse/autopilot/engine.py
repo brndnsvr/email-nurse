@@ -1017,8 +1017,12 @@ class AutopilotEngine:
         # Check if folder should go to local "On My Mac" mailboxes
         if decision.target_folder and self._is_local_folder(decision.target_folder):
             target_account = LOCAL_ACCOUNT_KEY  # Route to local "On My Mac"
-        elif decision.action == EmailAction.ARCHIVE and self._is_local_folder("Archive"):
-            target_account = LOCAL_ACCOUNT_KEY  # Archive locally if Archive is in local_folders
+        elif decision.action == EmailAction.ARCHIVE:
+            # Archive always goes to source account's Archive folder (not main_account)
+            if self._is_local_folder("Archive"):
+                target_account = LOCAL_ACCOUNT_KEY  # Archive locally if Archive is in local_folders
+            else:
+                target_account = email.account  # Source account's Archive
         else:
             # Standard routing: main_account or source account
             target_account = self.config.main_account or email.account
