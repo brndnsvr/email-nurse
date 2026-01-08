@@ -145,4 +145,5 @@ class AgingResult(BaseModel):
 
     moved_to_review: int = Field(default=0, description="Emails moved to Needs Review")
     deleted_from_review: int = Field(default=0, description="Emails deleted from Needs Review")
+    retention_deleted: int = Field(default=0, description="Emails deleted by folder retention rules")
     errors: int = Field(default=0, description="Errors during aging")

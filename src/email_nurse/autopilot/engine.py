@@ -1708,8 +1708,60 @@ class AutopilotEngine:
             # Needs Review folder might not exist yet, that's fine
             pass
 
-        if verbose >= 1 and (result.moved_to_review > 0 or result.deleted_from_review > 0):
-            console.print(f"  Aging: {result.moved_to_review} moved, {result.deleted_from_review} deleted")
+        # Phase 3: Apply folder retention rules
+        for rule in self.config.folder_retention_rules:
+            rule_account = rule.account or target_account
+            try:
+                folder_emails = get_messages(
+                    mailbox=rule.folder,
+                    account=rule_account,
+                    limit=100,
+                    unread_only=False,
+                )
+
+                retention_cutoff = datetime.now() - timedelta(days=rule.retention_days)
+
+                for email in folder_emails:
+                    if email.date_received and email.date_received < retention_cutoff:
+                        try:
+                            if dry_run:
+                                if verbose >= 1:
+                                    subject_short = email.subject[:40] + "..." if len(email.subject) > 40 else email.subject
+                                    console.print(f"  [dim][RETENTION][/dim] [red]DELETE[/red] ({rule.folder}, {rule.retention_days}d) {subject_short}")
+                                result.retention_deleted += 1
+                                continue
+
+                            delete_message(
+                                email.id,
+                                permanent=False,  # Soft delete to Trash
+                                source_mailbox=rule.folder,
+                                source_account=rule_account,
+                            )
+
+                            self.db.log_action(
+                                message_id=email.id,
+                                action="retention_delete",
+                                source="retention",
+                                details={"from_folder": rule.folder, "retention_days": rule.retention_days},
+                            )
+
+                            result.retention_deleted += 1
+
+                            if verbose >= 1:
+                                subject_short = email.subject[:40] + "..." if len(email.subject) > 40 else email.subject
+                                console.print(f"  [dim][RETENTION][/dim] [red]DELETE[/red] ({rule.folder}, {rule.retention_days}d) {subject_short}")
+
+                        except Exception as e:
+                            if verbose >= 1:
+                                console.print(f"  [red]Retention delete error:[/red] {e}")
+                            result.errors += 1
+
+            except Exception:
+                # Folder might not exist yet, that's fine
+                pass
+
+        if verbose >= 1 and (result.moved_to_review > 0 or result.deleted_from_review > 0 or result.retention_deleted > 0):
+            console.print(f"  Aging: {result.moved_to_review} moved, {result.deleted_from_review} deleted, {result.retention_deleted} retention purged")
 
         return result
 
