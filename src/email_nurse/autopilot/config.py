@@ -26,6 +26,17 @@ class AccountSettings(BaseModel):
     )
 
 
+class FolderRetentionRule(BaseModel):
+    """Per-folder retention policy for automatic email purging."""
+
+    folder: str = Field(description="Folder name to apply retention to")
+    retention_days: int = Field(ge=1, description="Days before emails are deleted to Trash")
+    account: str | None = Field(
+        default=None,
+        description="Specific account (None = use main_account)",
+    )
+
+
 class QuickRule(BaseModel):
     """A deterministic rule that runs before AI classification."""
 
@@ -131,6 +142,12 @@ class AutopilotConfig(BaseModel):
     account_settings: dict[str, AccountSettings] = Field(
         default_factory=dict,
         description="Per-account settings for folder handling (keyed by account name)",
+    )
+
+    # Per-folder retention rules
+    folder_retention_rules: list[FolderRetentionRule] = Field(
+        default_factory=list,
+        description="Per-folder retention policies for automatic purging to Trash",
     )
 
     def get_folder_policy(self, account: str) -> FolderPolicy:
