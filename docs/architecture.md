@@ -7,7 +7,7 @@ This document describes the internal architecture of Email Nurse for developers 
 ```
 src/email_nurse/
 ├── __init__.py              # Package version
-├── cli.py                   # Typer CLI commands (~1300 lines)
+├── cli.py                   # Typer CLI commands (~1900 lines)
 ├── config.py                # Pydantic settings and YAML config loading
 │
 ├── ai/                      # AI Provider Implementations
@@ -23,7 +23,14 @@ src/email_nurse/
 ├── autopilot/               # Intelligent Email Processing
 │   ├── config.py            # AutopilotConfig, QuickRule models
 │   ├── engine.py            # AutopilotEngine (~1200 lines)
-│   └── models.py            # AutopilotDecision, ProcessResult
+│   ├── models.py            # AutopilotDecision, ProcessResult
+│   ├── reports.py           # Daily activity report generation
+│   └── watcher.py           # Continuous monitoring mode
+│
+├── calendar/                # Calendar.app Integration
+│   ├── calendars.py         # Calendar dataclass, get_calendars()
+│   ├── events.py            # CalendarEvent dataclass, get_events()
+│   └── actions.py           # create_event(), delete_event()
 │
 ├── mail/                    # Mail.app Integration
 │   ├── accounts.py          # Account discovery and sync
@@ -33,7 +40,8 @@ src/email_nurse/
 │
 ├── reminders/               # Reminders.app Integration
 │   ├── lists.py             # Reminder list management
-│   └── reminders.py         # Individual reminder operations
+│   ├── reminders.py         # Individual reminder operations
+│   └── actions.py           # create_reminder(), complete_reminder()
 │
 ├── rules/                   # Rule-Based Processing
 │   ├── conditions.py        # Condition types and matching
@@ -57,6 +65,7 @@ Entry point for all user interactions. Uses Typer for CLI framework.
 - `messages` - View and classify messages
 - `autopilot` - Run intelligent processing
 - `reminders` - Apple Reminders integration
+- `calendar` - Apple Calendar integration
 - `rules` - Manage processing rules
 
 ### `config.py` - Configuration Management
@@ -292,6 +301,24 @@ CREATE TABLE mailbox_cache (
     mailbox TEXT,
     cached_at TIMESTAMP,
     PRIMARY KEY (account, mailbox)
+);
+
+CREATE TABLE watcher_state (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    pid INTEGER,
+    started_at TIMESTAMP,
+    last_inbox_count INTEGER,
+    last_check_at TIMESTAMP
+);
+
+CREATE TABLE pending_folders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    account TEXT NOT NULL,
+    folder TEXT NOT NULL,
+    message_id TEXT,
+    proposed_action JSON,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(account, folder, message_id)
 );
 ```
 

@@ -30,6 +30,7 @@ Configuration directory structure:
 
 ```
 ~/.config/email-nurse/
+├── autopilot.yaml       # Autopilot settings, quick rules, inbox aging
 ├── rules.yaml           # Email processing rules
 ├── templates.yaml       # Reply templates
 └── .env                 # Optional: environment variables
@@ -87,15 +88,33 @@ Get your API key from: https://platform.openai.com/
 
 Ollama must be installed and running. See: https://ollama.ai/
 
+### Autopilot Settings
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `EMAIL_NURSE_AUTOPILOT_ENABLED` | bool | `false` | Enable autopilot mode |
+| `EMAIL_NURSE_AUTOPILOT_CONFIG_FILE` | string | `autopilot.yaml` | Autopilot configuration filename |
+| `EMAIL_NURSE_AUTOPILOT_BATCH_SIZE` | int | `50` | Number of emails to process per autopilot run |
+| `EMAIL_NURSE_AUTOPILOT_RATE_LIMIT_DELAY` | float | `1.0` | Delay between AI API calls (seconds) |
+| `EMAIL_NURSE_LOW_CONFIDENCE_ACTION` | string | `queue_for_approval` | Action when AI confidence below threshold: `flag_for_review`, `skip`, `queue_for_approval` |
+| `EMAIL_NURSE_OUTBOUND_POLICY` | string | `allow_high_confidence` | Policy for outbound actions (reply/forward): `require_approval`, `allow_high_confidence`, `full_autopilot` |
+| `EMAIL_NURSE_OUTBOUND_CONFIDENCE_THRESHOLD` | float | `0.9` | Minimum confidence for auto-sending outbound messages |
+| `EMAIL_NURSE_MAILBOX_CACHE_TTL_MINUTES` | int | `60` | Minutes to cache mailbox list before refreshing |
+
 ### Processing Settings
 
 | Variable | Type | Default | Description |
 |----------|------|---------|-------------|
 | `EMAIL_NURSE_SYNC_INTERVAL_MINUTES` | int | `5` | Minutes between sync checks (≥1) |
 | `EMAIL_NURSE_PROCESS_INTERVAL_MINUTES` | int | `1` | Minutes between processing runs (≥1) |
-| `EMAIL_NURSE_WATCHER_INTERVAL` | int | `60` | Seconds between watcher processing cycles |
-| `EMAIL_NURSE_WATCHER_CHECK_NEW_INTERVAL` | int | `300` | Seconds between checks for new messages |
-| `EMAIL_NURSE_WATCHER_RUN_ON_START` | bool | `true` | Run immediate scan when watcher starts |
+
+### Watcher Settings
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `EMAIL_NURSE_POLL_INTERVAL_SECONDS` | int | `30` | Seconds between inbox count checks (≥5) |
+| `EMAIL_NURSE_POST_SCAN_INTERVAL_MINUTES` | int | `5` | Minutes to wait after any scan before next scheduled scan (≥1) |
+| `EMAIL_NURSE_WATCHER_STARTUP_SCAN` | bool | `true` | Run immediate scan when watcher starts |
 
 ### Daily Reports
 
@@ -145,7 +164,10 @@ EMAIL_NURSE_SMTP_FROM_ADDRESS=you@gmail.com
 | `EMAIL_NURSE_CONFIG_DIR` | path | `~/.config/email-nurse` | Configuration directory |
 | `EMAIL_NURSE_RULES_FILE` | string | `rules.yaml` | Rules filename (relative to config_dir) |
 | `EMAIL_NURSE_TEMPLATES_FILE` | string | `templates.yaml` | Templates filename (relative to config_dir) |
-| `EMAIL_NURSE_LOG_FILE` | path | - | Optional log file path |
+| `EMAIL_NURSE_LOG_FILE` | path | - | Optional log file path (deprecated, use LOG_DIR) |
+| `EMAIL_NURSE_LOG_DIR` | path | `~/Library/Logs` | Directory for log files |
+| `EMAIL_NURSE_LOG_ROTATION_SIZE_MB` | int | `5` | Max log file size in MB before rotation |
+| `EMAIL_NURSE_LOG_BACKUP_COUNT` | int | `3` | Number of rotated log files to keep |
 
 ## Configuration Files
 
@@ -338,6 +360,19 @@ quick_rules:
     folder: GitHub
 ```
 
+#### Local Folders
+
+Route specific folders to local "On My Mac" mailboxes instead of account folders. Useful for keeping newsletters local while syncing important emails:
+
+```yaml
+local_folders:
+  - Newsletters
+  - Marketing
+  - Spam
+```
+
+When an email is moved to a folder in this list, it will be stored locally regardless of which account the email came from.
+
 #### Inbox Aging
 
 Automatically moves stale inbox emails to a review folder, then deletes them after a retention period.
@@ -350,6 +385,38 @@ needs_review_retention_days: 14      # Days in review before deletion
 ```
 
 **Flow**: INBOX → (30 days) → Needs Review → (14 days) → Trash
+
+#### Folder Retention Rules
+
+Automatically purge emails from specific folders after a retention period. Unlike inbox aging (which only affects INBOX), folder retention rules can target any folder.
+
+```yaml
+folder_retention_rules:
+  - folder: "Newsletters"
+    retention_days: 30
+
+  - folder: "GitHub"
+    retention_days: 14
+    account: iCloud    # Optional: specific account (defaults to main_account)
+
+  - folder: "Receipts"
+    retention_days: 365
+```
+
+**How it works:**
+- Emails older than `retention_days` in the specified folder are moved to Trash
+- Runs automatically during each autopilot processing cycle
+- Set `account` to target a specific account's folder, or omit to use `main_account`
+
+#### Database Retention
+
+Control how long processed email records are kept in the SQLite database:
+
+```yaml
+processed_retention_days: 365   # Days to keep processed email records (default: 365)
+```
+
+Records older than this are automatically cleaned up to keep the database size manageable.
 
 ## Initial Setup
 
@@ -851,8 +918,8 @@ Email Nurse uses per-account logging with automatic rotation:
 ```
 
 **Log rotation:**
-- Each log file rotates at 10 MB (configurable)
-- Up to 5 backup files are kept (e.g., `email-nurse-iCloud.log.1`)
+- Each log file rotates at 5 MB (configurable)
+- Up to 3 backup files are kept (e.g., `email-nurse-iCloud.log.1`)
 - Errors from any account are duplicated to `email-nurse-error.log` with `[account]` prefix
 
 **Environment variables for logging:**
@@ -860,8 +927,8 @@ Email Nurse uses per-account logging with automatic rotation:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `EMAIL_NURSE_LOG_DIR` | `~/Library/Logs` | Directory for log files |
-| `EMAIL_NURSE_LOG_ROTATION_SIZE_MB` | `10` | Max log file size before rotation |
-| `EMAIL_NURSE_LOG_BACKUP_COUNT` | `5` | Number of rotated backups to keep |
+| `EMAIL_NURSE_LOG_ROTATION_SIZE_MB` | `5` | Max log file size before rotation |
+| `EMAIL_NURSE_LOG_BACKUP_COUNT` | `3` | Number of rotated backups to keep |
 
 ### 5. Test with Specific Mailboxes
 

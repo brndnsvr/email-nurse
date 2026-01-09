@@ -16,7 +16,8 @@ AI-powered email management and automation for macOS Mail.app.
 - **Daily Activity Reports**: Beautiful HTML email reports summarizing all email processing activity
 - **Direct SMTP Support**: Send emails via SMTP (Gmail, etc.) without relying on Mail.app configuration
 - **Continuous Monitoring**: Watcher mode for real-time email processing with configurable intervals
-- **Reminders Integration**: View and manage macOS Reminders.app lists
+- **Reminders Integration**: Create, view, and manage macOS Reminders.app items
+- **Calendar Integration**: Create events and view schedules via macOS Calendar.app
 - **Flexible Actions**: Move, delete, archive, flag, reply, forward emails automatically
 
 ## Installation
@@ -72,6 +73,9 @@ email-nurse autopilot report
 
 # View reminders
 email-nurse reminders lists
+
+# View today's calendar events
+email-nurse calendar today
 ```
 
 ## Utilities

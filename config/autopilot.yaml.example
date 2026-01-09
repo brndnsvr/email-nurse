@@ -52,6 +52,10 @@ autopilot:
   # Specific accounts to process (null = all accounts)
   accounts: null
 
+  # Central account for all move/archive operations (optional)
+  # When set, emails from other accounts will be moved to folders on this account
+  # main_account: iCloud
+
   # Route specific folders to local "On My Mac" mailboxes instead of account folders
   # Useful for keeping newsletters/marketing local while syncing important emails
   # local_folders:
@@ -85,3 +89,38 @@ autopilot:
         sender_contains: ["support@csquare.com"]
         subject_contains: ["Csquare SHPC"]
       actions: [mark_read, delete]
+
+    # Example: Move GitHub notifications to folder
+    - name: "GitHub Notifications"
+      match:
+        sender_domain: ["github.com"]
+      action: move
+      folder: GitHub
+
+  # Inbox aging - automatically move stale emails to a review folder
+  inbox_aging_enabled: false
+  inbox_stale_days: 30              # Days before email is "stale"
+  needs_review_folder: "Needs Review"
+  needs_review_retention_days: 14   # Days in review before deletion to Trash
+
+  # Database cleanup - days to keep processed email records
+  processed_retention_days: 365
+
+  # Per-account settings for folder handling
+  # Different providers (iCloud, Exchange, Gmail) have different folder creation capabilities
+  # account_settings:
+  #   iCloud:
+  #     folder_policy: auto_create    # auto_create, queue, or interactive
+  #     notify_on_pending: false
+  #   "Exchange Account":
+  #     folder_policy: queue          # Exchange often can't create folders via AppleScript
+  #     notify_on_pending: true
+
+  # Per-folder retention rules - automatically purge old emails
+  # folder_retention_rules:
+  #   - folder: "Newsletters"
+  #     retention_days: 30
+  #   - folder: "GitHub"
+  #     retention_days: 14
+  #   - folder: "Receipts"
+  #     retention_days: 365

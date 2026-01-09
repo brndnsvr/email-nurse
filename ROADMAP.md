@@ -81,8 +81,8 @@ Add AppleScript integration for Apple Calendar app, enabling:
 
 ### Implementation Notes
 
-**Direct event creation works** on this system despite reports of issues on macOS Sequoia.
-The `parse sentence` command (mentioned in some workarounds) is actually a Fantastical feature, not Calendar.app.
+**Direct event creation works** via AppleScript despite reports of issues on some macOS versions.
+Events are created directly using Calendar.app's AppleScript interface without requiring third-party apps.
 
 ### Phase 1.0: Read Operations ✅
 
@@ -162,7 +162,7 @@ Clicking the `message://` URL in Reminders or Calendar opens the email in Mail.a
 5. ✅ **Calendar CLI** - list, events, today commands
 6. ✅ **Reminders write** - actions.py (create, complete, delete)
 7. ✅ **Calendar write** - actions.py (create_event, delete_event)
-8. ⬜ **Tests** - Unit tests for parsing, integration tests for live calls
+8. ✅ **Tests** - Unit tests for parsing (144 tests total)
 
 ---
 
@@ -188,7 +188,7 @@ src/email_nurse/
 │   ├── __init__.py
 │   ├── calendars.py             # Calendar dataclass, get_calendars()
 │   ├── events.py                # CalendarEvent dataclass, get_events()
-│   └── actions.py               # create_event() via parse_sentence
+│   └── actions.py               # create_event(), delete_event()
 │
 └── cli.py                       # Extended with reminders_app, calendar_app
 ```
@@ -226,7 +226,7 @@ The AI receives today's calendar and pending reminders as context when classifyi
 
 ### Overview
 
-Comprehensive unit tests for Calendar and Reminders modules. Test count: 29 → 226 (+197 tests).
+Comprehensive unit tests for Calendar and Reminders modules. Test count: 144 tests.
 
 ### High-Priority Test Targets
 
@@ -256,7 +256,7 @@ tests/
 
 Most parsing can be tested without mocking AppleScript - pass mock output strings directly to parsing functions.
 
-**Estimated**: 100-150 new tests
+**Result**: 144 tests total
 
 ---
 
