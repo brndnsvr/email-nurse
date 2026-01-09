@@ -75,3 +75,13 @@ autopilot:
 
   # Only process emails from the last N days
   max_age_days: 7
+
+  # Quick rules - processed BEFORE AI (instant, no API cost)
+  # First match wins, so order matters
+  quick_rules:
+    # Example: CSquare SHPC notifications → mark read + Trash
+    - name: "CSquare SHPC"
+      match:
+        sender_contains: ["support@csquare.com"]
+        subject_contains: ["Csquare SHPC"]
+      actions: [mark_read, delete]
