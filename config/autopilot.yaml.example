@@ -75,3 +75,13 @@ autopilot:
 
   # Only process emails from the last N days
   max_age_days: 7
+
+  # Quick rules - processed BEFORE AI (instant, no API cost)
+  # First match wins, so order matters
+  quick_rules:
+    # Example: Work SHPC notifications → mark read + Trash
+    - name: "Work SHPC"
+      match:
+        sender_contains: ["support@work.com"]
+        subject_contains: ["Work SHPC"]
+      actions: [mark_read, delete]
