@@ -239,11 +239,68 @@ email-nurse reminders show "Shopping"
 email-nurse reminders incomplete
 ```
 
+### Managing Reminders
+
+```bash
+# Create a new reminder
+email-nurse reminders create "Call Mom" --list "Personal"
+
+# Create with due date and priority
+email-nurse reminders create "Submit report" --list "Work" --due "2024-01-15" --priority high
+
+# Complete a reminder
+email-nurse reminders complete <reminder-id> --list "Work"
+
+# Delete a reminder
+email-nurse reminders delete <reminder-id> --list "Work" --force
+```
+
 ### Notes
 
 - Reminders.app uses Catalyst and can be slow with large lists (1000+ items)
 - The `--counts` flag may timeout on very large lists
 - Email links in reminders are displayed when present
+
+## Calendar Integration
+
+Email Nurse integrates with macOS Calendar.app.
+
+### Viewing Calendars and Events
+
+```bash
+# List all calendars
+email-nurse calendar list
+
+# Show upcoming events (next 30 days)
+email-nurse calendar events
+
+# Show today's events
+email-nurse calendar today
+
+# Show events for a specific calendar
+email-nurse calendar events --calendar "Work"
+```
+
+### Creating Events
+
+```bash
+# Create an event
+email-nurse calendar create "Team Meeting" --start "2024-01-15 14:00"
+
+# Create with end time and location
+email-nurse calendar create "Lunch" --start "2024-01-15 12:00" --end "2024-01-15 13:00" --location "Cafe"
+
+# Create all-day event
+email-nurse calendar create "Company Holiday" --start "2024-01-15" --all-day
+
+# Create on specific calendar
+email-nurse calendar create "Doctor Appointment" --start "2024-01-15 10:00" --calendar "Personal"
+```
+
+### Notes
+
+- Calendar.app can be slow when querying many calendars
+- Event IDs are needed for delete operations (shown in event listings)
 
 ## Architecture Overview
 
@@ -260,6 +317,7 @@ Email Nurse
 │   ├── Quick Rules (instant, no AI)
 │   ├── AI Classification
 │   ├── Inbox Aging
+│   ├── Folder Retention Rules
 │   └── Pending Actions Queue
 │
 ├── AI Providers
@@ -268,12 +326,17 @@ Email Nurse
 │   └── Ollama (Local)
 │
 ├── Reminders.app Integration
-│   ├── List reminders
-│   └── Show incomplete items
+│   ├── List and view reminders
+│   └── Create, complete, and delete reminders
+│
+├── Calendar.app Integration
+│   ├── List calendars and events
+│   └── Create and delete events
 │
 └── CLI Interface
     ├── email-nurse autopilot run
     ├── email-nurse reminders
+    ├── email-nurse calendar
     └── email-nurse messages
 ```
 
