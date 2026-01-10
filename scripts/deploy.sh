@@ -41,6 +41,7 @@ FORCE=false
 NO_AGENT=false
 CONFIG_ONLY=false
 SNAPSHOT=false
+RESTART_ONLY=false
 
 usage() {
     cat << EOF
@@ -57,6 +58,7 @@ Options:
   --force         Overwrite existing installation without prompting
   --no-agent      Skip LaunchAgent installation
   --config-only   Transfer config files only (useful for updates)
+  --restart       Restart the LaunchAgent only (no file transfers)
   --snapshot      Backup current production configs to deploy/ directory
   -h, --help      Show this help message
 
@@ -65,6 +67,7 @@ Examples:
   $0 myserver                    # Full deployment to 'myserver'
   $0 user@192.168.1.100          # Deploy to specific host
   $0 myserver --config-only      # Update config only
+  $0 myserver --restart          # Restart service without deploying
   $0 myserver --dry-run          # Preview what would happen
 
 Config Sources (checked in order):
@@ -157,6 +160,18 @@ die() {
     exit 1
 }
 
+# Restart the LaunchAgent on remote host
+restart_agent() {
+    echo -n "Restarting LaunchAgent..."
+    if ssh "$TARGET_HOST" "launchctl stop com.bss.email-nurse 2>/dev/null; launchctl start com.bss.email-nurse"; then
+        log_ok
+        return 0
+    else
+        log_fail
+        return 1
+    fi
+}
+
 # Parse arguments
 TARGET_HOST=""
 while [[ $# -gt 0 ]]; do
@@ -179,6 +194,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --snapshot)
             SNAPSHOT=true
+            shift
+            ;;
+        --restart)
+            RESTART_ONLY=true
             shift
             ;;
         -h|--help)
@@ -204,6 +223,34 @@ if $SNAPSHOT; then
 fi
 
 [[ -z "$TARGET_HOST" ]] && die "SSH host is required. Use -h for help."
+
+# Handle restart-only mode
+if $RESTART_ONLY; then
+    echo ""
+    echo -e "${BOLD}Restarting Email-Nurse on $TARGET_HOST${NC}"
+    echo ""
+
+    # Check SSH connectivity
+    echo -n "Checking SSH connectivity..."
+    if ! ssh -o ConnectTimeout=10 -o BatchMode=yes "$TARGET_HOST" 'true' 2>/dev/null; then
+        log_fail
+        die "Cannot connect to $TARGET_HOST"
+    fi
+    log_ok
+
+    # Restart the agent
+    restart_agent
+
+    # Verify
+    echo ""
+    AGENT_STATUS=$(ssh "$TARGET_HOST" "launchctl list 2>/dev/null | grep -E 'com\.bss\.email-nurse\s' | awk '{print \$1}'")
+    if [[ -n "$AGENT_STATUS" && "$AGENT_STATUS" != "-" ]]; then
+        echo -e "${GREEN}✓${NC} LaunchAgent running (PID: $AGENT_STATUS)"
+    else
+        echo -e "${GREEN}✓${NC} LaunchAgent restarted (waiting for next run)"
+    fi
+    exit 0
+fi
 
 # Determine config source (prefer deploy/ if it exists)
 if [[ -d "$DEPLOY_DIR/config" ]] && [[ -n "$(ls -A "$DEPLOY_DIR/config" 2>/dev/null)" ]]; then
@@ -241,7 +288,7 @@ echo ""
 
 TOTAL_STEPS=8
 if $CONFIG_ONLY; then
-    TOTAL_STEPS=4
+    TOTAL_STEPS=5
 fi
 
 # Step 1: Check SSH connectivity
@@ -305,10 +352,18 @@ if $CONFIG_ONLY; then
     ssh "$TARGET_HOST" "ls -la ~/$CONFIG_DIR/" | head -10
     log_ok
 
+    # Restart to apply changes
+    if ! $DRY_RUN; then
+        log_step 5 $TOTAL_STEPS "Restarting LaunchAgent..."
+        restart_agent
+    else
+        log_step 5 $TOTAL_STEPS "Restarting LaunchAgent..."
+        log_skip
+        log_info "(dry-run mode)"
+    fi
+
     echo ""
-    echo -e "${GREEN}Configuration updated!${NC}"
-    echo "Restart the LaunchAgent to apply changes:"
-    echo "  ssh $TARGET_HOST 'launchctl stop com.bss.email-nurse && launchctl start com.bss.email-nurse'"
+    echo -e "${GREEN}Configuration updated and service restarted!${NC}"
     exit 0
 fi
 
@@ -427,8 +482,8 @@ else
         # Copy plist from determined source
         scp "$LAUNCHAGENT_SOURCE" "$TARGET_HOST":~/"$LAUNCH_AGENT_DIR/" >/dev/null
 
-        # Load new agent
-        ssh "$TARGET_HOST" "launchctl load ~/$LAUNCH_AGENT_DIR/$LAUNCH_AGENT_NAME"
+        # Load and start agent
+        ssh "$TARGET_HOST" "launchctl load ~/$LAUNCH_AGENT_DIR/$LAUNCH_AGENT_NAME && launchctl start com.bss.email-nurse"
     fi
     log_ok
 fi
