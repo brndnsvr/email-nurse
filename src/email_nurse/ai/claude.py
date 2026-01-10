@@ -102,10 +102,12 @@ CRITICAL GUIDELINES:
 8. Security-sensitive emails (passwords, 2FA, banking) should be left alone
 
 REMINDER/CALENDAR GUIDELINES:
-- Use create_reminder for: due dates, deadlines, follow-up requests, action items
-  Example: "Payment due by Jan 15" → reminder with due date
-  Example: "Can you review this?" → reminder to follow up
-- Use create_event for: meetings, conferences, significant events WITH specific dates/times
+- ONLY use create_reminder when the user's instructions EXPLICITLY request reminders
+- create_reminder is for: explicit deadlines, payment due dates, expiring offers with dates
+  Example: "Payment due by Jan 15" AND user instructions say "create reminders for bills" → reminder
+- Emails simply asking questions do NOT warrant reminders unless user instructions specify this
+- When in doubt about whether to create a reminder, use 'ignore' or 'flag' instead
+- Use create_event for: meetings, conferences, events WITH specific dates/times mentioned
   Example: "Our conference is March 10-12" → calendar event
   Example: "Let's meet Thursday at 2pm" → calendar event
 - Do NOT use create_event for calendar invites (those are handled by Mail.app)

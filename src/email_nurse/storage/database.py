@@ -111,6 +111,15 @@ class AutopilotDatabase:
                     updated_at TEXT NOT NULL
                 );
 
+                -- Track reminders created for emails (prevent duplicates)
+                CREATE TABLE IF NOT EXISTS created_reminders (
+                    message_id TEXT PRIMARY KEY,
+                    reminder_id TEXT NOT NULL,
+                    reminder_name TEXT NOT NULL,
+                    reminder_list TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+
                 -- Indexes for common queries
                 CREATE INDEX IF NOT EXISTS idx_processed_at
                     ON processed_emails(processed_at);
@@ -120,6 +129,8 @@ class AutopilotDatabase:
                     ON audit_log(timestamp);
                 CREATE INDEX IF NOT EXISTS idx_first_seen_at
                     ON email_first_seen(first_seen_at);
+                CREATE INDEX IF NOT EXISTS idx_created_reminders_at
+                    ON created_reminders(created_at);
             """)
 
             # Migration: Add folder-pending columns to pending_actions
@@ -913,4 +924,100 @@ class AutopilotDatabase:
         """
         with self._connection() as conn:
             cursor = conn.execute("DELETE FROM watcher_state")
+            return cursor.rowcount
+
+    # ─── Reminder Tracking (Deduplication) ────────────────────────────────
+
+    def has_reminder_for_email(self, message_id: str) -> bool:
+        """Check if a reminder already exists for this email.
+
+        Args:
+            message_id: The Mail.app message ID.
+
+        Returns:
+            True if a reminder was already created for this email.
+        """
+        with self._connection() as conn:
+            cursor = conn.execute(
+                "SELECT 1 FROM created_reminders WHERE message_id = ?",
+                (message_id,),
+            )
+            return cursor.fetchone() is not None
+
+    def get_reminder_for_email(self, message_id: str) -> dict[str, Any] | None:
+        """Get reminder info for an email if one exists.
+
+        Args:
+            message_id: The Mail.app message ID.
+
+        Returns:
+            Dict with reminder details, or None if no reminder exists.
+        """
+        with self._connection() as conn:
+            cursor = conn.execute(
+                """
+                SELECT message_id, reminder_id, reminder_name, reminder_list, created_at
+                FROM created_reminders WHERE message_id = ?
+                """,
+                (message_id,),
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
+            return {
+                "message_id": row["message_id"],
+                "reminder_id": row["reminder_id"],
+                "reminder_name": row["reminder_name"],
+                "reminder_list": row["reminder_list"],
+                "created_at": row["created_at"],
+            }
+
+    def record_reminder_created(
+        self,
+        message_id: str,
+        reminder_id: str,
+        reminder_name: str,
+        reminder_list: str,
+    ) -> None:
+        """Record that a reminder was created for an email.
+
+        Args:
+            message_id: The Mail.app message ID.
+            reminder_id: The Reminders.app reminder ID.
+            reminder_name: The reminder title.
+            reminder_list: The list the reminder was added to.
+        """
+        with self._connection() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO created_reminders
+                (message_id, reminder_id, reminder_name, reminder_list, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    message_id,
+                    reminder_id,
+                    reminder_name,
+                    reminder_list,
+                    datetime.now().isoformat(),
+                ),
+            )
+
+    def cleanup_old_reminder_records(self, retention_days: int) -> int:
+        """Remove old reminder tracking records.
+
+        Args:
+            retention_days: Delete records older than this many days.
+
+        Returns:
+            Number of records deleted.
+        """
+        with self._connection() as conn:
+            cursor = conn.execute(
+                """
+                DELETE FROM created_reminders
+                WHERE datetime(created_at) < datetime('now', ?)
+                """,
+                (f"-{retention_days} days",),
+            )
             return cursor.rowcount
