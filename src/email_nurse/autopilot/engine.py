@@ -353,6 +353,16 @@ class AutopilotEngine:
                     f"older than {self.config.processed_retention_days} days[/dim]"
                 )
 
+            # Also cleanup old reminder tracking records
+            deleted_reminders = self.db.cleanup_old_reminder_records(
+                self.config.processed_retention_days
+            )
+            if deleted_reminders > 0 and verbose >= 2:
+                console.print(
+                    f"[dim]Cleaned up {deleted_reminders} reminder records "
+                    f"older than {self.config.processed_retention_days} days[/dim]"
+                )
+
         # Show notification for any new pending folders
         if not dry_run and self._new_pending_folders:
             self._notify_pending_folders(verbose)
@@ -1129,15 +1139,39 @@ class AutopilotEngine:
 
                 case EmailAction.CREATE_REMINDER:
                     if decision.reminder_name:
+                        # Check if reminder already exists for this email
+                        if self.db.has_reminder_for_email(email.id):
+                            existing = self.db.get_reminder_for_email(email.id)
+                            reminder_logger = get_account_logger(email.account)
+                            reminder_logger.info(
+                                f"Skipping duplicate reminder for {email.id[:12]}... "
+                                f"(existing: {existing['reminder_name'] if existing else 'unknown'})"
+                            )
+                            return ProcessResult(
+                                message_id=email.id,
+                                success=True,
+                                action="create_reminder",
+                                reason=f"Reminder already exists: {existing['reminder_name'] if existing else 'unknown'}",
+                            )
+
                         from email_nurse.reminders import create_reminder_from_email
 
-                        create_reminder_from_email(
+                        reminder_list = decision.reminder_list or "Reminders"
+                        reminder_id = create_reminder_from_email(
                             message_id=email.id,
                             name=decision.reminder_name,
-                            list_name=decision.reminder_list or "Reminders",
+                            list_name=reminder_list,
                             due_date=decision.reminder_due,
                             subject=email.subject,
                             sender=email.sender,
+                        )
+
+                        # Record the reminder creation to prevent duplicates
+                        self.db.record_reminder_created(
+                            message_id=email.id,
+                            reminder_id=reminder_id,
+                            reminder_name=decision.reminder_name,
+                            reminder_list=reminder_list,
                         )
                     else:
                         return ProcessResult(
