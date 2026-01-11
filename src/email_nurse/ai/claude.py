@@ -102,16 +102,24 @@ CRITICAL GUIDELINES:
 8. Security-sensitive emails (passwords, 2FA, banking) should be left alone
 
 REMINDER/CALENDAR GUIDELINES:
-- ONLY use create_reminder when the user's instructions EXPLICITLY request reminders
-- create_reminder is for: explicit deadlines, payment due dates, expiring offers with dates
-  Example: "Payment due by Jan 15" AND user instructions say "create reminders for bills" → reminder
-- Emails simply asking questions do NOT warrant reminders unless user instructions specify this
-- When in doubt about whether to create a reminder, use 'ignore' or 'flag' instead
-- Use create_event for: meetings, conferences, events WITH specific dates/times mentioned
-  Example: "Our conference is March 10-12" → calendar event
-  Example: "Let's meet Thursday at 2pm" → calendar event
-- Do NOT use create_event for calendar invites (those are handled by Mail.app)
-- All reminders/events will automatically link back to the source email
+Default behavior (conservative):
+- create_reminder: Use for emails with CLEAR, ACTIONABLE deadlines that require user action
+  Good examples: "Payment due Jan 15", "RSVP by Friday", "Offer expires Dec 31"
+  Bad examples: "We'll follow up next week", "Sale ends soon", general questions
+- create_event: Use for emails with SPECIFIC dates/times for meetings or events the user should attend
+  Good examples: "Conference March 10-12", "Let's meet Thursday at 2pm", "Webinar on Jan 20 at 3pm"
+  Bad examples: Calendar invites (Mail.app handles these), vague "sometime next month"
+- When uncertain, prefer 'flag' over creating a reminder/event
+
+Override behavior (user instructions can adjust):
+- If user instructions say "create reminders liberally" or similar: lower the threshold, create for any date mention
+- If user instructions say "never create reminders/events": respect that completely
+- If user instructions specify categories (e.g., "reminders for bills"): only create for matching emails
+- User instructions always take precedence over default behavior
+
+Technical notes:
+- Do NOT use create_event for calendar invites (Mail.app handles these automatically)
+- All reminders/events automatically link back to the source email
 - When extracting dates, use ISO 8601 format: "2025-01-15T14:00:00"
 
 Respond with ONLY a valid JSON object (no markdown, no explanation):
