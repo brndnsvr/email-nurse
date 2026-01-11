@@ -353,48 +353,46 @@ Added section 9 to `autopilot.yaml` instructions with guidance for reminders:
 
 ---
 
-## Planned: Secondary Actions
+## Secondary Actions
 
-**Status**: ⬜ Planned
+**Status**: ✅ Complete
 **Priority**: Medium
 
 ### Overview
 
-Enable AI to recommend multiple actions per email (e.g., "archive AND create reminder").
+AI can now recommend multiple actions per email (e.g., "archive AND create reminder").
 
-### Current State
+### Implementation
 
-- Quick Rules already support `actions: [move, mark_read]` (list)
-- AI decisions only support single `action` field
-- Infrastructure exists for action chaining
-
-### Implementation Options
-
-**Option A - Secondary Action Field** (Simpler):
+**Option A - Secondary Action Field** was implemented:
 ```python
 class AutopilotDecision(BaseModel):
     action: EmailAction              # Primary action
     secondary_action: EmailAction | None = None
+    secondary_target_folder: str | None = None
 ```
 
-**Option B - Full Action List** (More Flexible):
-```python
-class AutopilotDecision(BaseModel):
-    actions: list[EmailAction]       # Multiple actions in order
-```
+### Design Decisions
 
-### Changes Required
+- **Confidence**: Secondary inherits primary confidence (single judgment)
+- **Error handling**: If secondary fails, primary still succeeds
+- **Outbound policy**: REPLY/FORWARD/DELETE not allowed as secondary actions
+- **Deduplication**: Existing checks apply to secondary CREATE_REMINDER/CREATE_EVENT
 
-1. Update `AutopilotDecision` model
-2. Update `AUTOPILOT_SYSTEM_PROMPT` to request secondary actions
-3. Modify `_execute_action()` to loop through actions
-4. Handle partial failure scenarios
+### Changes Made
+
+1. ✅ Updated `AutopilotDecision` model with `secondary_action` and `secondary_target_folder`
+2. ✅ Updated AI prompts (Claude + OpenAI) to explain secondary actions
+3. ✅ Added `_execute_secondary_action()` method to engine
+4. ✅ Updated `is_pim_action` property to check secondary
+5. ✅ Added `has_invalid_secondary` property for validation
 
 ### Common Combinations
 
 - `archive` + `create_reminder` - Archive but remind to follow up
 - `move` + `mark_read` - Sort and mark read
 - `create_event` + `archive` - Extract event, archive original
+- `flag` + `move` - Flag and move to folder
 
 ---
 
@@ -439,6 +437,7 @@ Enhance daily email reports to include today's schedule and pending reminders.
 Potential enhancements for future consideration:
 
 - ~~**Smart Duplicate Detection**~~ - ✅ Implemented (see Deduplication section above)
+- **General `run` Command** - The `email-nurse run --once` command is a placeholder for a simpler processing mode. Consider whether this is needed given `autopilot run` covers the use case.
 - **Recurring Pattern Learning** - Learn from user's manual corrections
 - **Priority Inference** - Set reminder priority based on email urgency signals
 - **Calendar Conflict Detection** - Warn if proposed event conflicts with existing

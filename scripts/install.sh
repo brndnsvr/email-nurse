@@ -508,6 +508,61 @@ WATCHER_EOF
 
 chmod +x "$BIN_DIR/email-nurse-watcher.sh"
 
+# Digest script (daily report)
+cat > "$BIN_DIR/email-nurse-digest.sh" << 'DIGEST_EOF'
+#!/bin/zsh
+
+# email-nurse-digest.sh
+# Daily digest report sender for email-nurse
+
+set -o pipefail
+
+INSTALL_DIR="$HOME/.local/share/email-nurse/current"
+CONFIG_DIR="$HOME/.config/email-nurse"
+LOG_DIR="$HOME/Library/Logs"
+
+log() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1"
+}
+
+log "Starting daily digest"
+
+# Skip if Mail.app is not running
+if ! pgrep -xq "Mail"; then
+    log "Mail.app not running, skipping digest"
+    exit 0
+fi
+
+# Load non-sensitive config from .env
+if [[ -f "$CONFIG_DIR/.env" ]]; then
+    while IFS='=' read -r key value; do
+        [[ "$key" =~ ^#.*$ || -z "$key" || "$key" =~ .*API_KEY.* ]] && continue
+        value="${value%\"}"
+        value="${value#\"}"
+        value="${value%\'}"
+        value="${value#\'}"
+        export "$key=$value"
+    done < "$CONFIG_DIR/.env"
+fi
+
+# Verify installation
+if [[ ! -d "$INSTALL_DIR/venv" ]]; then
+    log "ERROR: Installation not found at $INSTALL_DIR"
+    exit 1
+fi
+
+# Send daily digest
+if "$INSTALL_DIR/venv/bin/email-nurse" autopilot report; then
+    log "SUCCESS - Digest sent"
+else
+    EXIT_CODE=$?
+    log "FAILED - Exit code: $EXIT_CODE"
+    exit $EXIT_CODE
+fi
+DIGEST_EOF
+
+chmod +x "$BIN_DIR/email-nurse-digest.sh"
+
 success "Launch scripts installed"
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -636,6 +691,60 @@ WATCHER_PLIST_EOF
 success "Watcher LaunchAgent installed (run 'email-nurse-enable-watcher' to switch modes)"
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Step 6c: Install Digest LaunchAgent (daily report at 21:00)
+# ─────────────────────────────────────────────────────────────────────────────
+
+DIGEST_PLIST_NAME="com.bss.email-nurse-digest.plist"
+
+info "Installing Digest LaunchAgent (daily at 21:00)..."
+
+# Unload existing if present
+launchctl unload "$PLIST_DIR/$DIGEST_PLIST_NAME" 2>/dev/null || true
+
+# Create digest plist
+cat > "$PLIST_DIR/$DIGEST_PLIST_NAME" << DIGEST_PLIST_EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.bss.email-nurse-digest</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>$BIN_DIR/email-nurse-digest.sh</string>
+    </array>
+
+    <!-- Run daily at 21:00 (9 PM) -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>21</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>$LOG_DIR/email-nurse-digest.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>$LOG_DIR/email-nurse-digest.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+</dict>
+</plist>
+DIGEST_PLIST_EOF
+
+# Load the agent
+launchctl load "$PLIST_DIR/$DIGEST_PLIST_NAME"
+
+success "Digest LaunchAgent installed (sends daily report at 21:00)"
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Step 7: Copy Example Configs (if needed)
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -675,6 +784,11 @@ echo ""
 echo "    ${YELLOW}Watcher Mode (hybrid triggers - recommended):${NC}"
 echo "      Polls inbox every 30s + triggers immediately on new mail"
 echo "      Switch with: ${CYAN}email-nurse-mode watcher${NC}"
+echo ""
+echo "  ${BOLD}Daily Digest:${NC}"
+echo "    Sends daily activity report at 21:00"
+echo "    Logs: ${CYAN}$LOG_DIR/email-nurse-digest.log${NC}"
+echo "    Test now: ${CYAN}launchctl start com.bss.email-nurse-digest${NC}"
 echo ""
 
 # Migrate API keys if found in .env

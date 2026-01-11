@@ -1235,6 +1235,16 @@ class AutopilotEngine:
                             error="CREATE_EVENT requires event_summary and event_start",
                         )
 
+            # Execute secondary action if present
+            secondary_error: str | None = None
+            if decision.secondary_action:
+                _, secondary_error = await self._execute_secondary_action(
+                    email, decision, interactive, auto_create
+                )
+                if secondary_error:
+                    logger = get_account_logger(email.account)
+                    logger.warning(f"Secondary action warning: {secondary_error}")
+
             # Mark as processed and log
             self._mark_processed(email, decision)
 
@@ -1242,10 +1252,15 @@ class AutopilotEngine:
             if decision.action != EmailAction.IGNORE:
                 self.db.remove_first_seen(email.id)
 
+            # Build action name with secondary if present
+            full_action_name = action_name
+            if decision.secondary_action:
+                full_action_name = f"{action_name}+{decision.secondary_action.value}"
+
             return ProcessResult(
                 message_id=email.id,
                 success=True,
-                action=action_name,
+                action=full_action_name,
                 target_folder=result_folder,
                 reason=decision.reasoning,
             )
@@ -1279,8 +1294,182 @@ class AutopilotEngine:
                 "confidence": decision.confidence,
                 "reasoning": decision.reasoning,
                 "category": decision.category,
+                "secondary_action": decision.secondary_action.value if decision.secondary_action else None,
             },
         )
+
+    async def _execute_secondary_action(
+        self,
+        email: EmailMessage,
+        decision: AutopilotDecision,
+        interactive: bool = False,
+        auto_create: bool = False,
+    ) -> tuple[bool, str | None]:
+        """
+        Execute the secondary action if present.
+
+        Returns:
+            Tuple of (success, error_message). Success is True even if no secondary action.
+        """
+        if not decision.secondary_action:
+            return True, None
+
+        # Validate: outbound/destructive actions not allowed as secondary
+        if decision.has_invalid_secondary:
+            logger = get_account_logger(email.account)
+            logger.warning(
+                f"Invalid secondary action {decision.secondary_action.value} - "
+                "REPLY/FORWARD not allowed as secondary actions, skipping"
+            )
+            return True, None  # Ignore invalid secondary, don't fail
+
+        if decision.secondary_action == EmailAction.DELETE:
+            logger = get_account_logger(email.account)
+            logger.warning("DELETE not allowed as secondary action, skipping")
+            return True, None
+
+        logger = get_account_logger(email.account)
+        action_name = decision.secondary_action.value
+
+        # Determine target account for secondary move operations
+        secondary_folder = decision.secondary_target_folder
+        if secondary_folder and self._is_local_folder(secondary_folder):
+            target_account = LOCAL_ACCOUNT_KEY
+        elif decision.secondary_action == EmailAction.ARCHIVE:
+            if self._is_local_folder("Archive"):
+                target_account = LOCAL_ACCOUNT_KEY
+            else:
+                target_account = email.account
+        else:
+            target_account = self.config.main_account or email.account
+
+        try:
+            match decision.secondary_action:
+                case EmailAction.MOVE:
+                    if not secondary_folder:
+                        logger.warning("Secondary MOVE action missing target folder, skipping")
+                        return True, None
+
+                    result = self._resolve_folder(
+                        secondary_folder, target_account, email, decision,
+                        interactive, auto_create
+                    )
+                    if result is not None:
+                        logger.info(f"Secondary MOVE skipped: folder '{secondary_folder}' issue")
+                        return True, f"Secondary MOVE skipped: folder issue"
+
+                    move_message(
+                        email.id, secondary_folder, target_account,
+                        source_mailbox=email.mailbox, source_account=email.account
+                    )
+
+                case EmailAction.ARCHIVE:
+                    archive_folder = secondary_folder or "Archive"
+                    result = self._resolve_folder(
+                        archive_folder, target_account, email, decision,
+                        interactive, auto_create
+                    )
+                    if result is not None:
+                        logger.info("Secondary ARCHIVE skipped: Archive folder issue")
+                        return True, "Secondary ARCHIVE skipped"
+
+                    move_message(
+                        email.id, archive_folder, target_account,
+                        source_mailbox=email.mailbox, source_account=email.account
+                    )
+
+                case EmailAction.MARK_READ:
+                    mark_as_read(
+                        email.id, read=True,
+                        source_mailbox=email.mailbox, source_account=email.account
+                    )
+
+                case EmailAction.FLAG:
+                    flag_message(
+                        email.id, flagged=True,
+                        source_mailbox=email.mailbox, source_account=email.account
+                    )
+
+                case EmailAction.CREATE_REMINDER:
+                    if not decision.reminder_name:
+                        logger.warning("Secondary CREATE_REMINDER missing reminder_name, skipping")
+                        return True, None
+
+                    # Deduplication check
+                    if self.db.has_reminder_for_email(email.id):
+                        existing = self.db.get_reminder_for_email(email.id)
+                        logger.info(
+                            f"Secondary reminder skipped - already exists: "
+                            f"{existing['reminder_name'] if existing else 'unknown'}"
+                        )
+                        return True, None
+
+                    from email_nurse.reminders import create_reminder_from_email
+
+                    reminder_list = decision.reminder_list or "Reminders"
+                    reminder_id = create_reminder_from_email(
+                        message_id=email.id,
+                        name=decision.reminder_name,
+                        list_name=reminder_list,
+                        due_date=decision.reminder_due,
+                        subject=email.subject,
+                        sender=email.sender,
+                    )
+
+                    self.db.record_reminder_created(
+                        message_id=email.id,
+                        reminder_id=reminder_id,
+                        reminder_name=decision.reminder_name,
+                        reminder_list=reminder_list,
+                    )
+
+                case EmailAction.CREATE_EVENT:
+                    if not decision.event_summary or not decision.event_start:
+                        logger.warning("Secondary CREATE_EVENT missing required fields, skipping")
+                        return True, None
+
+                    # Deduplication check
+                    if self.db.has_event_for_email(email.id):
+                        existing = self.db.get_event_for_email(email.id)
+                        logger.info(
+                            f"Secondary event skipped - already exists: "
+                            f"{existing['event_summary'] if existing else 'unknown'}"
+                        )
+                        return True, None
+
+                    from email_nurse.calendar import create_event_from_email
+
+                    event_calendar = decision.event_calendar or "Calendar"
+                    event_id = create_event_from_email(
+                        summary=decision.event_summary,
+                        start_date=decision.event_start,
+                        message_id=email.id,
+                        calendar_name=event_calendar,
+                        end_date=decision.event_end,
+                        subject=email.subject,
+                        sender=email.sender,
+                    )
+
+                    self.db.record_event_created(
+                        message_id=email.id,
+                        event_id=event_id,
+                        event_summary=decision.event_summary,
+                        event_calendar=event_calendar,
+                        event_start=decision.event_start.isoformat(),
+                    )
+
+                case EmailAction.IGNORE:
+                    pass
+
+                case _:
+                    logger.warning(f"Unsupported secondary action: {action_name}")
+
+            logger.info(f"Secondary action executed: {action_name}")
+            return True, None
+
+        except Exception as e:
+            logger.error(f"Secondary action {action_name} failed: {e}")
+            return False, str(e)
 
     def _is_excluded(self, email: EmailMessage) -> bool:
         """Check if email should be excluded from processing."""

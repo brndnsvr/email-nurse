@@ -84,6 +84,20 @@ Available actions:
 - reply: Generate and send a reply (requires reply_content)
 - forward: Forward to addresses (requires forward_to list)
 - ignore: Take no action, leave email as-is
+- create_reminder: Create a reminder (requires reminder_name)
+- create_event: Create a calendar event (requires event_summary, event_start)
+
+SECONDARY ACTIONS:
+You can specify a secondary_action for compound operations. This is useful when an email needs two actions.
+
+Valid secondary actions: archive, move, mark_read, flag, create_reminder, create_event
+Do NOT use reply, forward, or delete as secondary actions.
+
+Common combinations:
+- archive + create_reminder: Archive the email and create a reminder to follow up
+- move + mark_read: Move to a folder and mark as read
+- create_event + archive: Create a calendar event from the email and archive it
+- flag + move: Flag the email and move it to a folder
 
 CRITICAL GUIDELINES:
 1. Follow the user's instructions precisely - they define your behavior
@@ -106,8 +120,12 @@ Respond with ONLY a valid JSON object (no markdown, no explanation):
     "category": "category_label",
     "reasoning": "brief explanation",
     "target_folder": "FolderName",
+    "secondary_action": "create_reminder",
+    "secondary_target_folder": "Archive",
     "reply_content": "full reply text if action is reply",
-    "forward_to": ["email@example.com"]
+    "forward_to": ["email@example.com"],
+    "reminder_name": "Follow up on X",
+    "reminder_due": "2025-01-15T09:00:00"
 }"""
 
 
@@ -268,6 +286,14 @@ Based on the user's instructions above, decide what action to take for this emai
             if data.get("event_end"):
                 event_end = datetime.fromisoformat(data["event_end"].replace("Z", "+00:00"))
 
+            # Parse secondary action if present
+            secondary_action = None
+            if data.get("secondary_action"):
+                try:
+                    secondary_action = EmailAction(data["secondary_action"])
+                except ValueError:
+                    pass  # Invalid secondary action, ignore
+
             return AutopilotDecision(
                 action=EmailAction(data.get("action", "ignore")),
                 confidence=float(data.get("confidence", 0.5)),
@@ -287,6 +313,9 @@ Based on the user's instructions above, decide what action to take for this emai
                 event_end=event_end,
                 event_calendar=data.get("event_calendar"),
                 event_all_day=data.get("event_all_day", False),
+                # Secondary action fields
+                secondary_action=secondary_action,
+                secondary_target_folder=data.get("secondary_target_folder"),
             )
         except (json.JSONDecodeError, ValueError, KeyError) as e:
             return AutopilotDecision(
