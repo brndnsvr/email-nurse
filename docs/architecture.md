@@ -157,6 +157,8 @@ Tracks processing state across runs.
 - `pending_actions` - Actions awaiting approval
 - `action_history` - Log of executed actions
 - `mailbox_cache` - Cached mailbox lists
+- `created_reminders` - Tracks reminders created per email (deduplication)
+- `created_events` - Tracks calendar events created per email (deduplication)
 
 **Key methods:**
 ```python
@@ -319,6 +321,26 @@ CREATE TABLE pending_folders (
     proposed_action JSON,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(account, folder, message_id)
+);
+
+-- Deduplication: track reminders created for emails
+CREATE TABLE created_reminders (
+    message_id TEXT PRIMARY KEY,
+    reminder_id TEXT NOT NULL,
+    reminder_name TEXT NOT NULL,
+    reminder_list TEXT NOT NULL,
+    due_date TEXT,
+    created_at TEXT NOT NULL
+);
+
+-- Deduplication: track calendar events created for emails
+CREATE TABLE created_events (
+    message_id TEXT PRIMARY KEY,
+    event_id TEXT NOT NULL,
+    event_summary TEXT NOT NULL,
+    event_calendar TEXT NOT NULL,
+    event_start TEXT NOT NULL,
+    created_at TEXT NOT NULL
 );
 ```
 
