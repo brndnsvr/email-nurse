@@ -107,10 +107,12 @@ REMINDER/CALENDAR GUIDELINES:
   Example: "Payment due by Jan 15" AND user instructions say "create reminders for bills" → reminder
 - Emails simply asking questions do NOT warrant reminders unless user instructions specify this
 - When in doubt about whether to create a reminder, use 'ignore' or 'flag' instead
-- Use create_event for: meetings, conferences, events WITH specific dates/times mentioned
-  Example: "Our conference is March 10-12" → calendar event
-  Example: "Let's meet Thursday at 2pm" → calendar event
-- Do NOT use create_event for calendar invites (those are handled by Mail.app)
+- ONLY use create_event when the user's instructions EXPLICITLY request calendar events
+- create_event is for: meetings, conferences, events WITH specific dates/times mentioned
+  Example: "Our conference is March 10-12" AND user instructions say "create calendar events" → event
+  Example: "Let's meet Thursday at 2pm" AND user instructions mention calendar → event
+- Do NOT use create_event for calendar invites (those are handled by Mail.app automatically)
+- When in doubt about whether to create a calendar event, use 'ignore' or 'flag' instead
 - All reminders/events will automatically link back to the source email
 - When extracting dates, use ISO 8601 format: "2025-01-15T14:00:00"
 

@@ -120,6 +120,16 @@ class AutopilotDatabase:
                     created_at TEXT NOT NULL
                 );
 
+                -- Track calendar events created for emails (prevent duplicates)
+                CREATE TABLE IF NOT EXISTS created_events (
+                    message_id TEXT PRIMARY KEY,
+                    event_id TEXT NOT NULL,
+                    event_summary TEXT NOT NULL,
+                    event_calendar TEXT NOT NULL,
+                    event_start TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+
                 -- Indexes for common queries
                 CREATE INDEX IF NOT EXISTS idx_processed_at
                     ON processed_emails(processed_at);
@@ -131,6 +141,8 @@ class AutopilotDatabase:
                     ON email_first_seen(first_seen_at);
                 CREATE INDEX IF NOT EXISTS idx_created_reminders_at
                     ON created_reminders(created_at);
+                CREATE INDEX IF NOT EXISTS idx_created_events_at
+                    ON created_events(created_at);
             """)
 
             # Migration: Add folder-pending columns to pending_actions
@@ -1016,6 +1028,107 @@ class AutopilotDatabase:
             cursor = conn.execute(
                 """
                 DELETE FROM created_reminders
+                WHERE datetime(created_at) < datetime('now', ?)
+                """,
+                (f"-{retention_days} days",),
+            )
+            return cursor.rowcount
+
+    # ─── Calendar Event Tracking (Deduplication) ─────────────────────────
+
+    def has_event_for_email(self, message_id: str) -> bool:
+        """Check if a calendar event already exists for this email.
+
+        Args:
+            message_id: The Mail.app message ID.
+
+        Returns:
+            True if an event was already created for this email.
+        """
+        with self._connection() as conn:
+            cursor = conn.execute(
+                "SELECT 1 FROM created_events WHERE message_id = ?",
+                (message_id,),
+            )
+            return cursor.fetchone() is not None
+
+    def get_event_for_email(self, message_id: str) -> dict[str, Any] | None:
+        """Get calendar event info for an email if one exists.
+
+        Args:
+            message_id: The Mail.app message ID.
+
+        Returns:
+            Dict with event details, or None if no event exists.
+        """
+        with self._connection() as conn:
+            cursor = conn.execute(
+                """
+                SELECT message_id, event_id, event_summary, event_calendar,
+                       event_start, created_at
+                FROM created_events WHERE message_id = ?
+                """,
+                (message_id,),
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
+            return {
+                "message_id": row["message_id"],
+                "event_id": row["event_id"],
+                "event_summary": row["event_summary"],
+                "event_calendar": row["event_calendar"],
+                "event_start": row["event_start"],
+                "created_at": row["created_at"],
+            }
+
+    def record_event_created(
+        self,
+        message_id: str,
+        event_id: str,
+        event_summary: str,
+        event_calendar: str,
+        event_start: str,
+    ) -> None:
+        """Record that a calendar event was created for an email.
+
+        Args:
+            message_id: The Mail.app message ID.
+            event_id: The Calendar.app event ID.
+            event_summary: The event title/summary.
+            event_calendar: The calendar the event was added to.
+            event_start: The event start date/time (ISO format).
+        """
+        with self._connection() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO created_events
+                (message_id, event_id, event_summary, event_calendar, event_start, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    message_id,
+                    event_id,
+                    event_summary,
+                    event_calendar,
+                    event_start,
+                    datetime.now().isoformat(),
+                ),
+            )
+
+    def cleanup_old_event_records(self, retention_days: int) -> int:
+        """Remove old calendar event tracking records.
+
+        Args:
+            retention_days: Delete records older than this many days.
+
+        Returns:
+            Number of records deleted.
+        """
+        with self._connection() as conn:
+            cursor = conn.execute(
+                """
+                DELETE FROM created_events
                 WHERE datetime(created_at) < datetime('now', ?)
                 """,
                 (f"-{retention_days} days",),
