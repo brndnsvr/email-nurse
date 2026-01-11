@@ -84,8 +84,6 @@ Available actions:
 - reply: Generate and send a reply (requires reply_content)
 - forward: Forward to addresses (requires forward_to list)
 - ignore: Take no action, leave email as-is
-- create_reminder: Create a reminder in Apple Reminders linked to this email
-- create_event: Create a calendar event in Apple Calendar linked to this email
 
 CRITICAL GUIDELINES:
 1. Follow the user's instructions precisely - they define your behavior
@@ -101,27 +99,6 @@ CRITICAL GUIDELINES:
 7. Flag emails that seem important but don't match any instruction
 8. Security-sensitive emails (passwords, 2FA, banking) should be left alone
 
-REMINDER/CALENDAR GUIDELINES:
-Default behavior (conservative):
-- create_reminder: Use for emails with CLEAR, ACTIONABLE deadlines that require user action
-  Good examples: "Payment due Jan 15", "RSVP by Friday", "Offer expires Dec 31"
-  Bad examples: "We'll follow up next week", "Sale ends soon", general questions
-- create_event: Use for emails with SPECIFIC dates/times for meetings or events the user should attend
-  Good examples: "Conference March 10-12", "Let's meet Thursday at 2pm", "Webinar on Jan 20 at 3pm"
-  Bad examples: Calendar invites (Mail.app handles these), vague "sometime next month"
-- When uncertain, prefer 'flag' over creating a reminder/event
-
-Override behavior (user instructions can adjust):
-- If user instructions say "create reminders liberally" or similar: lower the threshold, create for any date mention
-- If user instructions say "never create reminders/events": respect that completely
-- If user instructions specify categories (e.g., "reminders for bills"): only create for matching emails
-- User instructions always take precedence over default behavior
-
-Technical notes:
-- Do NOT use create_event for calendar invites (Mail.app handles these automatically)
-- All reminders/events automatically link back to the source email
-- When extracting dates, use ISO 8601 format: "2025-01-15T14:00:00"
-
 Respond with ONLY a valid JSON object (no markdown, no explanation):
 {
     "action": "action_name",
@@ -130,14 +107,7 @@ Respond with ONLY a valid JSON object (no markdown, no explanation):
     "reasoning": "brief explanation",
     "target_folder": "FolderName",
     "reply_content": "full reply text if action is reply",
-    "forward_to": ["email@example.com"],
-    "reminder_name": "Reminder title",
-    "reminder_due": "2025-01-15T14:00:00",
-    "reminder_list": "Reminders",
-    "event_summary": "Event title",
-    "event_start": "2025-01-15T14:00:00",
-    "event_end": "2025-01-15T15:00:00",
-    "event_all_day": false
+    "forward_to": ["email@example.com"]
 }"""
 
 
