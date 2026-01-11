@@ -219,6 +219,83 @@ The AI receives today's calendar and pending reminders as context when classifyi
 
 ---
 
+## Balanced Reminder/Calendar Behavior with Override Support
+
+**Status**: ✅ Complete
+**Priority**: High
+
+### Overview
+
+Refined AI behavior for creating reminders and calendar events with sensible defaults and user-configurable overrides.
+
+### Default Behavior (Conservative)
+
+**Reminders**: Only created for emails with CLEAR, ACTIONABLE deadlines requiring user action.
+- ✅ Good: "Payment due Jan 15", "RSVP by Friday", "Offer expires Dec 31"
+- ❌ Bad: "We'll follow up next week", "Sale ends soon", general questions
+
+**Calendar Events**: Only created for emails with SPECIFIC dates/times for meetings or events.
+- ✅ Good: "Conference March 10-12", "Let's meet Thursday at 2pm", "Webinar on Jan 20 at 3pm"
+- ❌ Bad: Calendar invites (Mail.app handles these), vague "sometime next month"
+
+When uncertain, the AI prefers `flag` over creating a reminder/event.
+
+### Override Behavior
+
+User instructions in `autopilot.yaml` can adjust the threshold:
+- `"create reminders liberally"` → Lower threshold, create for any date mention
+- `"never create reminders/events"` → Respect completely
+- Specific categories (e.g., `"reminders for bills"`) → Only create for matching emails
+
+User instructions always take precedence over default behavior.
+
+**Files Modified**:
+- `ai/claude.py` - Updated prompt with default vs override behavior guidelines
+
+---
+
+## Deduplication for Reminders and Calendar Events
+
+**Status**: ✅ Complete
+**Priority**: High
+
+### Overview
+
+Prevent duplicate reminders and calendar events from being created when emails are reprocessed.
+
+### Implementation
+
+**Database Tracking**:
+- `created_reminders` table - Tracks reminders created per email message ID
+- `created_events` table - Tracks calendar events created per email message ID
+
+**Processing Flow**:
+1. Before creating a reminder/event, check if one already exists for this email
+2. If exists, skip creation and log the duplicate detection
+3. If new, create the reminder/event and record it in the database
+4. Old tracking records are cleaned up based on `processed_retention_days`
+
+**Database Methods**:
+```python
+# Reminder tracking
+db.has_reminder_for_email(message_id) -> bool
+db.get_reminder_for_email(message_id) -> dict | None
+db.record_reminder_created(message_id, reminder_id, ...)
+db.cleanup_old_reminder_records(retention_days) -> int
+
+# Event tracking
+db.has_event_for_email(message_id) -> bool
+db.get_event_for_email(message_id) -> dict | None
+db.record_event_created(message_id, event_id, ...)
+db.cleanup_old_event_records(retention_days) -> int
+```
+
+**Files Modified**:
+- `storage/database.py` - Added tracking tables and methods
+- `autopilot/engine.py` - Added duplicate checks before creation, cleanup on run
+
+---
+
 ## Unit Tests
 
 **Status**: ✅ Complete
@@ -361,7 +438,7 @@ Enhance daily email reports to include today's schedule and pending reminders.
 
 Potential enhancements for future consideration:
 
-- **Smart Duplicate Detection** - Check if reminder/event already exists before creating
+- ~~**Smart Duplicate Detection**~~ - ✅ Implemented (see Deduplication section above)
 - **Recurring Pattern Learning** - Learn from user's manual corrections
 - **Priority Inference** - Set reminder priority based on email urgency signals
 - **Calendar Conflict Detection** - Warn if proposed event conflicts with existing
