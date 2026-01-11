@@ -73,6 +73,13 @@ class AutopilotDecision(BaseModel):
     event_all_day: bool = Field(
         default=False, description="Whether this is an all-day event"
     )
+    # Secondary action support
+    secondary_action: EmailAction | None = Field(
+        default=None, description="Optional secondary action after primary"
+    )
+    secondary_target_folder: str | None = Field(
+        default=None, description="Target folder for secondary MOVE/ARCHIVE"
+    )
 
     @property
     def is_outbound(self) -> bool:
@@ -87,7 +94,15 @@ class AutopilotDecision(BaseModel):
     @property
     def is_pim_action(self) -> bool:
         """Check if this action creates a PIM (Personal Information Manager) item."""
-        return self.action in (EmailAction.CREATE_REMINDER, EmailAction.CREATE_EVENT)
+        pim_actions = (EmailAction.CREATE_REMINDER, EmailAction.CREATE_EVENT)
+        return self.action in pim_actions or self.secondary_action in pim_actions
+
+    @property
+    def has_invalid_secondary(self) -> bool:
+        """Check if secondary action is invalid (outbound actions not allowed)."""
+        if self.secondary_action is None:
+            return False
+        return self.secondary_action in (EmailAction.REPLY, EmailAction.FORWARD)
 
 
 class PendingAction(BaseModel):

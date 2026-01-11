@@ -371,9 +371,8 @@ def run(
     console.print(f"  Dry run: {'Yes' if dry_run else 'No'}")
 
     if once:
-        console.print("\n[yellow]Single run mode - processing once then exiting[/yellow]")
-        # TODO: Implement single processing run
-        console.print("[dim]Processing not yet implemented[/dim]")
+        console.print("\n[yellow]Single run mode - not implemented[/yellow]")
+        console.print("[dim]Use 'email-nurse autopilot run' instead[/dim]")
     else:
         console.print("\n[yellow]Daemon mode not yet implemented[/yellow]")
         console.print("Use --once for single run")

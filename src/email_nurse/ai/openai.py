@@ -38,6 +38,18 @@ Available actions:
 - reply: Generate reply (requires reply_content)
 - forward: Forward to addresses (requires forward_to)
 - ignore: Take no action
+- create_reminder: Create a reminder (requires reminder_name)
+- create_event: Create a calendar event (requires event_summary, event_start)
+
+SECONDARY ACTIONS:
+You can specify a secondary_action for compound operations.
+Valid secondary actions: archive, move, mark_read, flag, create_reminder, create_event
+Do NOT use reply, forward, or delete as secondary actions.
+
+Common combinations:
+- archive + create_reminder: Archive and create a reminder to follow up
+- move + mark_read: Move to a folder and mark as read
+- create_event + archive: Create calendar event and archive
 
 Guidelines:
 1. Follow user instructions precisely
@@ -53,8 +65,12 @@ Respond with JSON only:
     "category": "category_label",
     "reasoning": "brief explanation",
     "target_folder": "FolderName",
+    "secondary_action": "create_reminder",
+    "secondary_target_folder": "Archive",
     "reply_content": "reply text if action is reply",
-    "forward_to": ["email@example.com"]
+    "forward_to": ["email@example.com"],
+    "reminder_name": "Follow up on X",
+    "reminder_due": "2025-01-15T09:00:00"
 }"""
 
 
@@ -177,6 +193,15 @@ Decide what action to take based on the instructions above."""
 
         try:
             data = json.loads(response_text)
+
+            # Parse secondary action if present
+            secondary_action = None
+            if data.get("secondary_action"):
+                try:
+                    secondary_action = EmailAction(data["secondary_action"])
+                except ValueError:
+                    pass  # Invalid secondary action, ignore
+
             return AutopilotDecision(
                 action=EmailAction(data.get("action", "ignore")),
                 confidence=float(data.get("confidence", 0.5)),
@@ -186,6 +211,9 @@ Decide what action to take based on the instructions above."""
                 target_account=data.get("target_account"),
                 reply_content=data.get("reply_content"),
                 forward_to=data.get("forward_to"),
+                # Secondary action fields
+                secondary_action=secondary_action,
+                secondary_target_folder=data.get("secondary_target_folder"),
             )
         except (json.JSONDecodeError, ValueError, KeyError) as e:
             return AutopilotDecision(
