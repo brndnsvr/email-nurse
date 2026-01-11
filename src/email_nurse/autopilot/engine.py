@@ -363,6 +363,16 @@ class AutopilotEngine:
                     f"older than {self.config.processed_retention_days} days[/dim]"
                 )
 
+            # Also cleanup old calendar event tracking records
+            deleted_events = self.db.cleanup_old_event_records(
+                self.config.processed_retention_days
+            )
+            if deleted_events > 0 and verbose >= 2:
+                console.print(
+                    f"[dim]Cleaned up {deleted_events} event records "
+                    f"older than {self.config.processed_retention_days} days[/dim]"
+                )
+
         # Show notification for any new pending folders
         if not dry_run and self._new_pending_folders:
             self._notify_pending_folders(verbose)
@@ -1182,16 +1192,41 @@ class AutopilotEngine:
 
                 case EmailAction.CREATE_EVENT:
                     if decision.event_summary and decision.event_start:
+                        # Check if calendar event already exists for this email
+                        if self.db.has_event_for_email(email.id):
+                            existing = self.db.get_event_for_email(email.id)
+                            event_logger = get_account_logger(email.account)
+                            event_logger.info(
+                                f"Skipping duplicate event for {email.id[:12]}... "
+                                f"(existing: {existing['event_summary'] if existing else 'unknown'})"
+                            )
+                            return ProcessResult(
+                                message_id=email.id,
+                                success=True,
+                                action="create_event",
+                                reason=f"Event already exists: {existing['event_summary'] if existing else 'unknown'}",
+                            )
+
                         from email_nurse.calendar import create_event_from_email
 
-                        create_event_from_email(
+                        event_calendar = decision.event_calendar or "Calendar"
+                        event_id = create_event_from_email(
                             summary=decision.event_summary,
                             start_date=decision.event_start,
                             message_id=email.id,
-                            calendar_name=decision.event_calendar or "Calendar",
+                            calendar_name=event_calendar,
                             end_date=decision.event_end,
                             subject=email.subject,
                             sender=email.sender,
+                        )
+
+                        # Record the event creation to prevent duplicates
+                        self.db.record_event_created(
+                            message_id=email.id,
+                            event_id=event_id,
+                            event_summary=decision.event_summary,
+                            event_calendar=event_calendar,
+                            event_start=decision.event_start.isoformat(),
                         )
                     else:
                         return ProcessResult(
