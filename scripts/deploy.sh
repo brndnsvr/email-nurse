@@ -160,7 +160,7 @@ die() {
     exit 1
 }
 
-# Restart the LaunchAgent on remote host
+# Restart the LaunchAgent on remote host (legacy, for --restart flag)
 restart_agent() {
     echo -n "Restarting LaunchAgent..."
     if ssh "$TARGET_HOST" "launchctl stop com.bss.email-nurse 2>/dev/null; launchctl start com.bss.email-nurse"; then
@@ -168,6 +168,44 @@ restart_agent() {
         return 0
     else
         log_fail
+        return 1
+    fi
+}
+
+# Restart the watcher service on remote host (proper restart sequence)
+restart_watcher() {
+    local install_dir="$APP_DIR/current"
+    local service="com.bss.email-nurse-watcher"
+
+    echo -n "      Stopping watcher process..."
+    ssh "$TARGET_HOST" "pkill -f 'email-nurse autopilot watch' 2>/dev/null || true"
+    sleep 2
+    log_ok
+
+    echo -n "      Clearing stale PID lock..."
+    ssh "$TARGET_HOST" "~/$install_dir/venv/bin/email-nurse autopilot reset-watcher 2>/dev/null || true"
+    log_ok
+
+    echo -n "      Starting watcher service..."
+    if ssh "$TARGET_HOST" "launchctl start '$service'" 2>/dev/null; then
+        sleep 3
+        log_ok
+    else
+        log_fail
+        return 1
+    fi
+
+    # Verify
+    echo -n "      Verifying watcher..."
+    local pid
+    pid=$(ssh "$TARGET_HOST" "pgrep -f 'email-nurse autopilot watch' 2>/dev/null || true")
+    if [[ -n "$pid" ]]; then
+        log_ok
+        log_info "Watcher running (PID $pid)"
+        return 0
+    else
+        log_fail
+        log_info "Check logs: ssh $TARGET_HOST 'tail ~/Library/Logs/email-nurse-watcher-error.log'"
         return 1
     fi
 }
@@ -286,7 +324,7 @@ if $DRY_RUN; then
 fi
 echo ""
 
-TOTAL_STEPS=8
+TOTAL_STEPS=9
 if $CONFIG_ONLY; then
     TOTAL_STEPS=5
 fi
@@ -486,6 +524,21 @@ else
         ssh "$TARGET_HOST" "launchctl load ~/$LAUNCH_AGENT_DIR/$LAUNCH_AGENT_NAME && launchctl start com.bss.email-nurse"
     fi
     log_ok
+fi
+
+# Step 9: Restart watcher service
+if $NO_AGENT; then
+    log_step 9 $TOTAL_STEPS "Restarting watcher service..."
+    log_skip
+    log_info "(--no-agent flag set)"
+else
+    log_step 9 $TOTAL_STEPS "Restarting watcher service..."
+    if ! $DRY_RUN; then
+        restart_watcher
+    else
+        log_skip
+        log_info "(dry-run mode)"
+    fi
 fi
 
 # Verification
