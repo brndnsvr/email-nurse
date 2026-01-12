@@ -396,39 +396,41 @@ class AutopilotDecision(BaseModel):
 
 ---
 
-## Planned: Daily Digest Enhancement
+## Daily Digest Enhancement
 
-**Status**: ⬜ Planned
+**Status**: ✅ Complete
 **Priority**: Medium
 
 ### Overview
 
-Enhance daily email reports to include today's schedule and pending reminders.
+Enhanced daily email reports to include tomorrow's schedule and pending reminders.
 
-### Current State
+### Implemented Sections
 
-`DailyReportGenerator` creates HTML/text reports showing:
-- Actions taken (move, archive, delete counts)
-- Folder breakdown
-- Account breakdown
-- Activity log
+**Tomorrow's Schedule**:
+- Lists calendar events for the next day (time, summary, location)
+- All-day events shown separately
+- Data source: `get_events()` with tomorrow's date range
 
-### New Sections to Add
-
-**Today's Schedule**:
-- List today's calendar events (time, summary)
-- Data source: `get_events_today()`
-
-**Pending Reminders**:
-- List incomplete reminders (due date, name)
-- Highlight overdue items in red
+**Pending Reminders** (up to 10 shown):
+- Sorted by due date (overdue first, then upcoming, then no-date)
+- Overdue items highlighted in red
+- Due today items highlighted in blue
 - Data source: `get_reminders(completed=False)`
 
-**PIM Actions Taken**:
-- List reminders/events created by autopilot today
-- Data source: `audit_log` with action=create_reminder/create_event
+**Email Activity**:
+- Total processed count with action breakdown
+- By-folder and by-account summaries
+- Detailed activity log with timestamps
 
-**Location**: `src/email_nurse/autopilot/reports.py`
+### Edge Cases Handled
+
+- Calendar/Reminders app not running: gracefully skips section
+- No events scheduled: shows "No events scheduled for tomorrow"
+- No pending reminders: shows "All caught up!"
+- More than 10 reminders: shows "... and X more"
+
+**Files Modified**: `src/email_nurse/autopilot/reports.py`
 
 ---
 

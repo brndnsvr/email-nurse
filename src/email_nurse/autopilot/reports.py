@@ -3,17 +3,19 @@
 from __future__ import annotations
 
 import json
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from email_nurse.calendar.events import CalendarEvent
+    from email_nurse.reminders.reminders import Reminder
     from email_nurse.storage.database import AutopilotDatabase
 
 
 class DailyReportGenerator:
     """Generates and sends daily activity reports."""
 
-    def __init__(self, database: "AutopilotDatabase") -> None:
+    def __init__(self, database: AutopilotDatabase) -> None:
         """
         Initialize the report generator.
 
@@ -21,6 +23,36 @@ class DailyReportGenerator:
             database: Database instance for querying activity.
         """
         self.db = database
+
+    def _get_tomorrow_events(self) -> list[CalendarEvent]:
+        """Get calendar events for tomorrow."""
+        from email_nurse.calendar.events import get_events
+
+        today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        tomorrow_start = today + timedelta(days=1)
+        tomorrow_end = tomorrow_start + timedelta(days=1)
+
+        try:
+            return get_events(start_date=tomorrow_start, end_date=tomorrow_end)
+        except Exception:
+            return []  # Calendar app not running or error
+
+    def _get_pending_reminders(self, limit: int = 50) -> list[Reminder]:
+        """Get incomplete reminders, prioritizing those with due dates."""
+        from email_nurse.reminders.reminders import get_reminders
+
+        try:
+            reminders = get_reminders(completed=False, limit=limit)
+            # Sort: overdue first, then by due date, then no-date items
+            return sorted(
+                reminders,
+                key=lambda r: (
+                    r.due_date is None,  # Items without due dates last
+                    r.due_date or datetime.max,
+                ),
+            )
+        except Exception:
+            return []  # Reminders app not running or error
 
     def generate_report(self, report_date: date | None = None) -> str:
         """
@@ -33,23 +65,88 @@ class DailyReportGenerator:
             Formatted plain-text report string.
         """
         activity = self.db.get_daily_activity(report_date)
-        return self._format_report(activity)
+        tomorrow_events = self._get_tomorrow_events()
+        pending_reminders = self._get_pending_reminders()
+        return self._format_report(activity, tomorrow_events, pending_reminders)
 
-    def _format_report(self, activity: dict[str, Any]) -> str:
+    def _format_report(
+        self,
+        activity: dict[str, Any],
+        tomorrow_events: list[CalendarEvent] | None = None,
+        pending_reminders: list[Reminder] | None = None,
+    ) -> str:
         """Format activity data into readable report."""
         lines: list[str] = []
         report_date: date = activity["date"]
         date_str = report_date.strftime("%B %d, %Y")
+        tomorrow_date = (datetime.now() + timedelta(days=1)).strftime("%A, %B %d")
 
         # Header
         lines.append("=" * 60)
-        lines.append(f"          Email Nurse Daily Report - {date_str}")
+        lines.append(f"          Email Nurse Daily Digest - {date_str}")
         lines.append("=" * 60)
         lines.append("")
 
-        # Summary section
-        lines.append("SUMMARY")
-        lines.append("-" * 7)
+        # Tomorrow's Schedule section
+        if tomorrow_events is not None:
+            lines.append(f"TOMORROW'S SCHEDULE ({tomorrow_date})")
+            lines.append("-" * 40)
+            if not tomorrow_events:
+                lines.append("  No events scheduled for tomorrow.")
+            else:
+                for event in tomorrow_events:
+                    if event.all_day:
+                        time_str = "  [All-day]    "
+                    else:
+                        start = event.start_date.strftime("%I:%M %p").lstrip("0")
+                        end = event.end_date.strftime("%I:%M %p").lstrip("0")
+                        time_str = f"  {start:>8} - {end:<8}"
+                    lines.append(f"{time_str} {event.summary}")
+                    if event.location:
+                        lines.append(f"               @ {event.location}")
+            lines.append("")
+
+        # Pending Reminders section
+        if pending_reminders is not None:
+            now = datetime.now()
+            today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            today_end = today_start + timedelta(days=1)
+
+            lines.append(f"PENDING REMINDERS ({len(pending_reminders)} items)")
+            lines.append("-" * 40)
+            if not pending_reminders:
+                lines.append("  All caught up! No pending reminders.")
+            else:
+                max_shown = 10
+                for idx, reminder in enumerate(pending_reminders):
+                    if idx >= max_shown:
+                        remaining = len(pending_reminders) - idx
+                        lines.append(f"  ... and {remaining} more")
+                        break
+
+                    if reminder.due_date:
+                        if reminder.due_date < today_start:
+                            # Overdue
+                            due_str = reminder.due_date.strftime("%b %d")
+                            prefix = f"  OVERDUE ({due_str}):"
+                        elif reminder.due_date < today_end:
+                            prefix = "  Due Today:"
+                        else:
+                            due_str = reminder.due_date.strftime("%b %d")
+                            prefix = f"  Due {due_str}:"
+                    else:
+                        prefix = "  [No date]:"
+
+                    # Truncate long reminder names
+                    name = reminder.name
+                    if len(name) > 40:
+                        name = name[:37] + "..."
+                    lines.append(f"{prefix} {name}")
+            lines.append("")
+
+        # Email Activity Summary section
+        lines.append("EMAIL ACTIVITY")
+        lines.append("-" * 14)
 
         total = activity["total"]
         action_counts = activity["action_counts"]
@@ -157,10 +254,16 @@ class DailyReportGenerator:
 
         return lines
 
-    def _format_report_html(self, activity: dict[str, Any]) -> str:
+    def _format_report_html(
+        self,
+        activity: dict[str, Any],
+        tomorrow_events: list[CalendarEvent] | None = None,
+        pending_reminders: list[Reminder] | None = None,
+    ) -> str:
         """Format activity data into HTML email."""
         report_date: date = activity["date"]
         date_str = report_date.strftime("%B %d, %Y")
+        tomorrow_date = (datetime.now() + timedelta(days=1)).strftime("%A, %B %d")
 
         total = activity["total"]
         action_counts = activity["action_counts"]
@@ -168,6 +271,10 @@ class DailyReportGenerator:
         folder_counts = activity["folder_counts"]
         account_counts = activity["account_counts"]
         entries = activity["entries"]
+
+        now = datetime.now()
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        today_end = today_start + timedelta(days=1)
 
         # Build HTML
         html_parts = [
@@ -190,10 +297,20 @@ class DailyReportGenerator:
             '  .stat-value { font-size: 24px; font-weight: bold; }',
             '  .section { margin-bottom: 30px; }',
             '  .section h3 { color: #007aff; font-size: 18px; margin-bottom: 16px; border-bottom: 2px solid #e5e5e7; padding-bottom: 8px; }',
+            '  .section h3.calendar { color: #1a73e8; border-bottom-color: #1a73e8; }',
+            '  .section h3.reminders { color: #f57c00; border-bottom-color: #f57c00; }',
             '  table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }',
             '  th { background: #f5f5f7; color: #333; font-weight: 600; text-align: left; padding: 12px; border-bottom: 2px solid #007aff; }',
             '  td { padding: 10px 12px; border-bottom: 1px solid #e5e5e7; }',
             '  tr:hover { background: #f9f9f9; }',
+            '  .event-time { color: #666; font-size: 13px; white-space: nowrap; }',
+            '  .event-title { font-weight: 500; }',
+            '  .event-location { color: #666; font-size: 13px; }',
+            '  .reminder-item { padding: 8px 0; border-bottom: 1px solid #e5e5e7; }',
+            '  .reminder-item:last-child { border-bottom: none; }',
+            '  .reminder-overdue { color: #d32f2f; }',
+            '  .reminder-today { color: #1976d2; }',
+            '  .reminder-due { color: #666; font-size: 13px; }',
             '  .log-entry { background: #f9f9f9; border-left: 4px solid #007aff; padding: 16px; margin-bottom: 12px; border-radius: 4px; }',
             '  .log-entry.error { border-left-color: #ff3b30; }',
             '  .log-time { color: #666; font-size: 13px; font-weight: 600; }',
@@ -201,15 +318,71 @@ class DailyReportGenerator:
             '  .log-detail { color: #666; font-size: 14px; margin: 2px 0; }',
             '  .footer { text-align: center; color: #999; font-size: 13px; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e5e7; }',
             '  .no-activity { text-align: center; color: #999; padding: 40px; }',
+            '  .empty-section { color: #999; font-style: italic; padding: 16px 0; }',
             '</style>',
             '</head>',
             '<body>',
             '<div class="container">',
             '  <div class="header">',
-            f'    <h1>📧 Email Nurse Daily Report</h1>',
+            '    <h1>Email Nurse Daily Digest</h1>',
             f'    <div class="date">{date_str}</div>',
             '  </div>',
         ]
+
+        # Tomorrow's Schedule section
+        if tomorrow_events is not None:
+            html_parts.append('  <div class="section">')
+            html_parts.append(f'    <h3 class="calendar">📅 Tomorrow\'s Schedule ({tomorrow_date})</h3>')
+            if not tomorrow_events:
+                html_parts.append('    <div class="empty-section">No events scheduled for tomorrow.</div>')
+            else:
+                html_parts.append('    <table>')
+                html_parts.append('      <tr><th style="width: 140px;">Time</th><th>Event</th><th>Location</th></tr>')
+                for event in tomorrow_events:
+                    if event.all_day:
+                        time_str = "All day"
+                    else:
+                        start = event.start_date.strftime("%I:%M %p").lstrip("0")
+                        end = event.end_date.strftime("%I:%M %p").lstrip("0")
+                        time_str = f"{start} - {end}"
+                    location = event.location or ""
+                    html_parts.append(f'      <tr><td class="event-time">{time_str}</td><td class="event-title">{event.summary}</td><td class="event-location">{location}</td></tr>')
+                html_parts.append('    </table>')
+            html_parts.append('  </div>')
+
+        # Pending Reminders section
+        if pending_reminders is not None:
+            html_parts.append('  <div class="section">')
+            html_parts.append(f'    <h3 class="reminders">✅ Pending Reminders ({len(pending_reminders)} items)</h3>')
+            if not pending_reminders:
+                html_parts.append('    <div class="empty-section">All caught up! No pending reminders.</div>')
+            else:
+                html_parts.append('    <div>')
+                max_shown = 10
+                for idx, reminder in enumerate(pending_reminders):
+                    if idx >= max_shown:
+                        remaining = len(pending_reminders) - idx
+                        html_parts.append(f'    <div class="reminder-item" style="color: #666; font-style: italic;">... and {remaining} more</div>')
+                        break
+
+                    if reminder.due_date:
+                        if reminder.due_date < today_start:
+                            due_str = reminder.due_date.strftime("%b %d")
+                            prefix = f'<span class="reminder-overdue"><strong>⚠ OVERDUE</strong> ({due_str}):</span>'
+                        elif reminder.due_date < today_end:
+                            prefix = '<span class="reminder-today"><strong>📌 Due Today:</strong></span>'
+                        else:
+                            due_str = reminder.due_date.strftime("%b %d")
+                            prefix = f'<span class="reminder-due">Due {due_str}:</span>'
+                    else:
+                        prefix = '<span class="reminder-due">[No date]:</span>'
+
+                    name = reminder.name
+                    if len(name) > 50:
+                        name = name[:47] + "..."
+                    html_parts.append(f'    <div class="reminder-item">{prefix} {name}</div>')
+                html_parts.append('    </div>')
+            html_parts.append('  </div>')
 
         # Summary section
         if total == 0:
@@ -359,13 +532,16 @@ class DailyReportGenerator:
 
         settings = Settings()
 
-        # Get activity data for both plain text and HTML formatting
+        # Get activity data and PIM context for both plain text and HTML formatting
         activity = self.db.get_daily_activity(report_date)
-        report_text = self._format_report(activity)
-        report_html = self._format_report_html(activity)
+        tomorrow_events = self._get_tomorrow_events()
+        pending_reminders = self._get_pending_reminders()
+
+        report_text = self._format_report(activity, tomorrow_events, pending_reminders)
+        report_html = self._format_report_html(activity, tomorrow_events, pending_reminders)
 
         actual_date = report_date or date.today()
-        subject = f"Email Nurse Report - {actual_date.strftime('%b %d, %Y')}"
+        subject = f"Email Nurse Daily Digest - {actual_date.strftime('%b %d, %Y')}"
 
         # Use direct SMTP if configured, otherwise fall back to Mail.app
         if settings.smtp_enabled and settings.smtp_host and settings.smtp_username and settings.smtp_password:
