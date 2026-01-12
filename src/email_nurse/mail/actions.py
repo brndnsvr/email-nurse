@@ -534,19 +534,18 @@ def compose_email(
         temp_path = f.name
 
     try:
-        # Build sender determination AppleScript
-        # If sender_address is specified, use it directly; otherwise get first from account
+        # Build message properties - sender is optional
+        # If sender_address is specified, include it; otherwise let Mail use default
         if sender_escaped:
-            sender_setup = f'set senderAddr to "{sender_escaped}"'
+            msg_props = f'{{subject:"{subject_escaped}", content:msgContent, visible:false, sender:"{sender_escaped}"}}'
         else:
-            sender_setup = f'set senderAddr to address of first item of (email addresses of account "{account_escaped}")'
+            msg_props = f'{{subject:"{subject_escaped}", content:msgContent, visible:false}}'
 
         script = f'''
         set filePath to POSIX file "{temp_path}"
         set msgContent to read filePath as text
         tell application "Mail"
-            {sender_setup}
-            set newMsg to make new outgoing message with properties {{subject:"{subject_escaped}", content:msgContent, visible:false, sender:senderAddr}}
+            set newMsg to make new outgoing message with properties {msg_props}
             tell newMsg
                 make new to recipient at end of to recipients with properties {{address:"{to_escaped}"}}
             end tell
