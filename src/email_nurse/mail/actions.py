@@ -539,7 +539,7 @@ def compose_email(
         if sender_escaped:
             sender_setup = f'set senderAddr to "{sender_escaped}"'
         else:
-            sender_setup = f'set senderAddr to first item of (email addresses of account "{account_escaped}")'
+            sender_setup = f'set senderAddr to address of first item of (email addresses of account "{account_escaped}")'
 
         script = f'''
         set filePath to POSIX file "{temp_path}"
