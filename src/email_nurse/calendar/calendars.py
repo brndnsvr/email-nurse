@@ -41,6 +41,21 @@ def _check_calendar_running(error_msg: str) -> None:
         raise CalendarAppNotRunningError()
 
 
+def _ensure_calendar_running() -> None:
+    """Launch Calendar.app if not running and wait for it to be ready."""
+    import subprocess
+    import time
+
+    # Check if running
+    result = subprocess.run(["pgrep", "-x", "Calendar"], capture_output=True)
+    if result.returncode == 0:
+        return  # Already running
+
+    # Launch Calendar.app using open command (more reliable than AppleScript)
+    subprocess.run(["open", "-a", "Calendar"], check=True)
+    time.sleep(2)  # Give it time to fully initialize
+
+
 def get_calendars() -> list[Calendar]:
     """
     Get all calendars from Calendar.app.
