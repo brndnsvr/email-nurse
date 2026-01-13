@@ -11,6 +11,7 @@ from email_nurse.calendar.calendars import (
     UNIT_SEP,
     CalendarAppError,
     _check_calendar_running,
+    _ensure_calendar_running,
 )
 
 
@@ -98,6 +99,9 @@ def get_events(
         CalendarAppNotRunningError: If Calendar.app is not running.
         CalendarAppError: If the AppleScript fails.
     """
+    # Ensure Calendar.app is running
+    _ensure_calendar_running()
+
     # Default date range: now to 30 days from now
     if start_date is None:
         start_date = datetime.now()
@@ -152,6 +156,10 @@ def get_events(
                     if evtRecurrence is missing value then set evtRecurrence to ""
                 end try
 
+                -- Use "-" placeholder for empty strings (AppleScript strips empty strings at end)
+                if evtUrl is "" then set evtUrl to "-"
+                if evtRecurrence is "" then set evtRecurrence to "-"
+
                 if output is not "" then set output to output & RS
                 set output to output & evtId & US & evtSummary & US & evtDesc & US & evtLocation & US & evtStart & US & evtEnd & US & (evtAllDay as string) & US & "{cal_escaped}" & US & evtUrl & US & evtRecurrence
             end repeat
@@ -205,6 +213,10 @@ def get_events(
                         if evtRecurrence is missing value then set evtRecurrence to ""
                     end try
 
+                    -- Use "-" placeholder for empty strings (AppleScript strips empty strings at end)
+                    if evtUrl is "" then set evtUrl to "-"
+                    if evtRecurrence is "" then set evtRecurrence to "-"
+
                     if output is not "" then set output to output & RS
                     set output to output & evtId & US & evtSummary & US & evtDesc & US & evtLocation & US & evtStart & US & evtEnd & US & (evtAllDay as string) & US & calName & US & evtUrl & US & evtRecurrence
                 end repeat
@@ -215,8 +227,8 @@ def get_events(
         '''
 
     try:
-        # Calendar.app can be slow when querying many calendars - use 90s timeout
-        result = run_applescript(script, timeout=90)
+        # Calendar.app can be very slow with many events (10k+) - use 120s timeout
+        result = run_applescript(script, timeout=120)
     except AppleScriptError as e:
         _check_calendar_running(str(e))
         raise CalendarAppError(str(e), e.script) from e
@@ -238,8 +250,8 @@ def get_events(
                     end_date=_parse_date(parts[5]) or datetime.now(),
                     all_day=parts[6].lower() == "true",
                     calendar_name=parts[7],
-                    url=parts[8] if parts[8] else None,
-                    recurrence_rule=parts[9] if parts[9] else None,
+                    url=parts[8] if parts[8] and parts[8] != "-" else None,
+                    recurrence_rule=parts[9] if parts[9] and parts[9] != "-" else None,
                 )
             )
 
