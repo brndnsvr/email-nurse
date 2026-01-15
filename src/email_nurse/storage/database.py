@@ -130,6 +130,16 @@ class AutopilotDatabase:
                     created_at TEXT NOT NULL
                 );
 
+                -- Track quick rule execution failures for retry logic
+                CREATE TABLE IF NOT EXISTS rule_failures (
+                    message_id TEXT NOT NULL,
+                    rule_name TEXT NOT NULL,
+                    failure_count INTEGER DEFAULT 1,
+                    last_error TEXT,
+                    last_attempt TEXT NOT NULL,
+                    PRIMARY KEY (message_id, rule_name)
+                );
+
                 -- Indexes for common queries
                 CREATE INDEX IF NOT EXISTS idx_processed_at
                     ON processed_emails(processed_at);
@@ -143,6 +153,8 @@ class AutopilotDatabase:
                     ON created_reminders(created_at);
                 CREATE INDEX IF NOT EXISTS idx_created_events_at
                     ON created_events(created_at);
+                CREATE INDEX IF NOT EXISTS idx_rule_failures_attempt
+                    ON rule_failures(last_attempt);
             """)
 
             # Migration: Add folder-pending columns to pending_actions
@@ -1132,5 +1144,108 @@ class AutopilotDatabase:
                 WHERE datetime(created_at) < datetime('now', ?)
                 """,
                 (f"-{retention_days} days",),
+            )
+            return cursor.rowcount
+
+    # ─── Rule Failure Tracking ────────────────────────────────────────────
+
+    def increment_rule_failure(
+        self, message_id: str, rule_name: str, error: str
+    ) -> int:
+        """Increment failure count for a quick rule execution.
+
+        Args:
+            message_id: The email message ID.
+            rule_name: The name of the quick rule that failed.
+            error: The error message.
+
+        Returns:
+            The new failure count after increment.
+        """
+        with self._connection() as conn:
+            # Try to update existing record
+            cursor = conn.execute(
+                """
+                UPDATE rule_failures
+                SET failure_count = failure_count + 1,
+                    last_error = ?,
+                    last_attempt = ?
+                WHERE message_id = ? AND rule_name = ?
+                """,
+                (error, datetime.now().isoformat(), message_id, rule_name),
+            )
+
+            if cursor.rowcount == 0:
+                # No existing record, insert new one
+                conn.execute(
+                    """
+                    INSERT INTO rule_failures
+                    (message_id, rule_name, failure_count, last_error, last_attempt)
+                    VALUES (?, ?, 1, ?, ?)
+                    """,
+                    (message_id, rule_name, error, datetime.now().isoformat()),
+                )
+                return 1
+
+            # Get the updated count
+            cursor = conn.execute(
+                """
+                SELECT failure_count FROM rule_failures
+                WHERE message_id = ? AND rule_name = ?
+                """,
+                (message_id, rule_name),
+            )
+            row = cursor.fetchone()
+            return row["failure_count"] if row else 1
+
+    def clear_rule_failures(self, message_id: str) -> None:
+        """Clear all failure records for a message after successful processing.
+
+        Args:
+            message_id: The email message ID.
+        """
+        with self._connection() as conn:
+            conn.execute(
+                "DELETE FROM rule_failures WHERE message_id = ?",
+                (message_id,),
+            )
+
+    def get_rule_failure_count(self, message_id: str, rule_name: str) -> int:
+        """Get the current failure count for a message/rule combination.
+
+        Args:
+            message_id: The email message ID.
+            rule_name: The name of the quick rule.
+
+        Returns:
+            The failure count, or 0 if no failures recorded.
+        """
+        with self._connection() as conn:
+            cursor = conn.execute(
+                """
+                SELECT failure_count FROM rule_failures
+                WHERE message_id = ? AND rule_name = ?
+                """,
+                (message_id, rule_name),
+            )
+            row = cursor.fetchone()
+            return row["failure_count"] if row else 0
+
+    def cleanup_old_rule_failures(self, days: int = 7) -> int:
+        """Remove stale failure records older than specified days.
+
+        Args:
+            days: Delete records older than this many days.
+
+        Returns:
+            Number of records deleted.
+        """
+        with self._connection() as conn:
+            cursor = conn.execute(
+                """
+                DELETE FROM rule_failures
+                WHERE datetime(last_attempt) < datetime('now', ?)
+                """,
+                (f"-{days} days",),
             )
             return cursor.rowcount

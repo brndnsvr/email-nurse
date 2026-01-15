@@ -373,6 +373,13 @@ class AutopilotEngine:
                     f"older than {self.config.processed_retention_days} days[/dim]"
                 )
 
+            # Cleanup stale rule failure records (shorter retention - 7 days)
+            deleted_failures = self.db.cleanup_old_rule_failures(days=7)
+            if deleted_failures > 0 and verbose >= 2:
+                console.print(
+                    f"[dim]Cleaned up {deleted_failures} stale rule failure records[/dim]"
+                )
+
         # Show notification for any new pending folders
         if not dry_run and self._new_pending_folders:
             self._notify_pending_folders(verbose)
@@ -1679,6 +1686,9 @@ class AutopilotEngine:
             if "ignore" not in actions:
                 self.db.remove_first_seen(email.id)
 
+            # Clear any previous failure records on success
+            self.db.clear_rule_failures(email.id)
+
             return ProcessResult(
                 message_id=email.id,
                 success=True,
@@ -1690,13 +1700,25 @@ class AutopilotEngine:
 
         except Exception as e:
             logger = get_account_logger(email.account)
-            logger.error(f"Quick rule \"{rule.name}\" failed: {e}")
-
-            # If "Invalid index" error, email was likely already moved - mark as processed
-            # to prevent infinite retry loop
             error_str = str(e).lower()
-            if "invalid index" in error_str or "-1719" in error_str:
-                logger.info(f"Email likely already moved, marking as processed to prevent retry")
+
+            # Classify error type
+            is_message_gone = "invalid index" in error_str or "-1719" in error_str
+            is_transient = any(
+                x in error_str
+                for x in ["timeout", "timed out", "connection", "busy", "temporarily"]
+            )
+
+            # Track failure count for retry logic
+            failure_count = self.db.increment_rule_failure(email.id, rule.name, str(e))
+            max_retries = 3
+
+            if is_message_gone:
+                # Message was already moved/deleted - mark as processed
+                logger.info(
+                    f"Quick rule \"{rule.name}\": Email no longer in mailbox, "
+                    "marking as processed"
+                )
                 self.db.mark_processed(
                     message_id=email.id,
                     mailbox=email.mailbox,
@@ -1706,6 +1728,7 @@ class AutopilotEngine:
                     action={"rule": rule.name, "actions": actions, "note": "already_moved"},
                     confidence=1.0,
                 )
+                self.db.clear_rule_failures(email.id)
                 return ProcessResult(
                     message_id=email.id,
                     success=True,
@@ -1715,12 +1738,45 @@ class AutopilotEngine:
                     rule_matched=rule.name,
                 )
 
-            return ProcessResult(
-                message_id=email.id,
-                success=False,
-                error=str(e),
-                rule_matched=rule.name,
-            )
+            elif failure_count >= max_retries:
+                # Max retries exceeded - give up and mark as processed to stop retry loop
+                logger.warning(
+                    f"Quick rule \"{rule.name}\" failed {failure_count}x, giving up: {e}"
+                )
+                self.db.mark_processed(
+                    message_id=email.id,
+                    mailbox=email.mailbox,
+                    account=email.account,
+                    subject=(email.subject or "")[:100],
+                    sender=(email.sender or "")[:100],
+                    action={
+                        "rule": rule.name,
+                        "actions": actions,
+                        "note": "max_retries_exceeded",
+                        "error": str(e)[:200],
+                    },
+                    confidence=0.0,
+                )
+                self.db.clear_rule_failures(email.id)
+                return ProcessResult(
+                    message_id=email.id,
+                    success=False,
+                    error=f"Failed after {failure_count} attempts: {e}",
+                    rule_matched=rule.name,
+                )
+
+            else:
+                # Transient or unknown error - will retry on next scan
+                logger.error(
+                    f"Quick rule \"{rule.name}\" failed "
+                    f"(attempt {failure_count}/{max_retries}): {e}"
+                )
+                return ProcessResult(
+                    message_id=email.id,
+                    success=False,
+                    error=str(e),
+                    rule_matched=rule.name,
+                )
 
     def _print_result(self, email: EmailMessage, result: ProcessResult, verbose: int) -> None:
         """Print processing result based on verbosity level."""
