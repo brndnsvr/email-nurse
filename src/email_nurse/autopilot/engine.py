@@ -1691,6 +1691,30 @@ class AutopilotEngine:
         except Exception as e:
             logger = get_account_logger(email.account)
             logger.error(f"Quick rule \"{rule.name}\" failed: {e}")
+
+            # If "Invalid index" error, email was likely already moved - mark as processed
+            # to prevent infinite retry loop
+            error_str = str(e).lower()
+            if "invalid index" in error_str or "-1719" in error_str:
+                logger.info(f"Email likely already moved, marking as processed to prevent retry")
+                self.db.mark_processed(
+                    message_id=email.id,
+                    mailbox=email.mailbox,
+                    account=email.account,
+                    subject=(email.subject or "")[:100],
+                    sender=(email.sender or "")[:100],
+                    action={"rule": rule.name, "actions": actions, "note": "already_moved"},
+                    confidence=1.0,
+                )
+                return ProcessResult(
+                    message_id=email.id,
+                    success=True,
+                    action=action_names,
+                    target_folder=rule.folder,
+                    reason=f"Rule: {rule.name} (already moved)",
+                    rule_matched=rule.name,
+                )
+
             return ProcessResult(
                 message_id=email.id,
                 success=False,
