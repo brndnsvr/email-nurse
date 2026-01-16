@@ -1546,6 +1546,19 @@ class AutopilotEngine:
             else:
                 return False  # No domain found, can't match
 
+        # Body content matching (OR logic within list)
+        if "body_contains" in rule.match:
+            body_lower = email.content.lower()
+            patterns = rule.match["body_contains"]
+            if not any(p.lower() in body_lower for p in patterns):
+                return False
+
+        # Subject matching with AND logic (ALL patterns must match)
+        if "subject_contains_all" in rule.match:
+            patterns = rule.match["subject_contains_all"]
+            if not all(p.lower() in subject_lower for p in patterns):
+                return False
+
         return True
 
     def _execute_quick_rule(
