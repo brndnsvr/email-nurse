@@ -207,6 +207,22 @@ class WatcherEngine:
 
         return None, None
 
+    def _is_external_scan_running(self) -> bool:
+        """Check if another autopilot process is running a scan."""
+        import subprocess
+
+        try:
+            # Look for 'autopilot run' processes (not 'watch')
+            result = subprocess.run(
+                ["pgrep", "-f", "email-nurse autopilot run"],
+                capture_output=True,
+                text=True,
+            )
+            # pgrep returns 0 if matches found
+            return result.returncode == 0
+        except Exception:
+            return False
+
     async def _trigger_scan(self, reason: str, details: str | None = None) -> None:
         """
         Execute a scan using AutopilotEngine.
@@ -218,6 +234,12 @@ class WatcherEngine:
         if self._scan_in_progress:
             if self._verbose >= 2:
                 console.print("[dim]Scan already in progress, skipping[/dim]")
+            return
+
+        # Check for external scans (e.g., interval LaunchAgent)
+        if self._is_external_scan_running():
+            if self._verbose >= 2:
+                console.print("[dim]External scan in progress, skipping[/dim]")
             return
 
         self._scan_in_progress = True
