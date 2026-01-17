@@ -20,14 +20,12 @@ console = Console()
 # Sub-command groups
 accounts_app = typer.Typer(help="Manage email accounts")
 messages_app = typer.Typer(help="View and process messages")
-rules_app = typer.Typer(help="Manage processing rules")
 autopilot_app = typer.Typer(help="Autopilot mode operations")
 reminders_app = typer.Typer(help="Apple Reminders integration")
 calendar_app = typer.Typer(help="Apple Calendar integration")
 
 app.add_typer(accounts_app, name="accounts")
 app.add_typer(messages_app, name="messages")
-app.add_typer(rules_app, name="rules")
 app.add_typer(autopilot_app, name="autopilot")
 app.add_typer(reminders_app, name="reminders")
 app.add_typer(calendar_app, name="calendar")
@@ -59,51 +57,6 @@ def init(
         settings.config_dir = config_dir
 
     settings.ensure_config_dir()
-
-    # Create example rules file if it doesn't exist
-    if not settings.rules_path.exists():
-        example_rules = """# Email Nurse Rules Configuration
-# Each rule defines conditions to match and actions to take
-
-rules:
-  - name: "Archive Newsletters"
-    description: "Move newsletters to Archive folder"
-    enabled: true
-    priority: 100
-    conditions:
-      - type: subject_contains
-        value: "newsletter"
-      - type: subject_contains
-        value: "unsubscribe"
-    match_all: false
-    action:
-      action: move
-      target_folder: "Archive"
-    stop_processing: true
-
-  - name: "Flag Important"
-    description: "Flag emails from important senders"
-    enabled: true
-    priority: 50
-    conditions:
-      - type: sender_domain
-        value: "example.com"
-    action:
-      action: flag
-    stop_processing: false
-
-  - name: "AI Triage"
-    description: "Use AI to classify unmatched emails"
-    enabled: false
-    priority: 999
-    conditions: []
-    use_ai: true
-    ai_context: "Classify this email. Move marketing to Marketing folder, invoices to Finance folder, social media (not Reddit) to Social folder."
-    action:
-      action: ignore
-"""
-        settings.rules_path.write_text(example_rules)
-        console.print(f"[green]Created[/green] {settings.rules_path}")
 
     # Create example templates file if it doesn't exist
     if not settings.templates_path.exists():
@@ -322,43 +275,6 @@ def messages_classify(
             console.print()
 
     asyncio.run(classify_all())
-
-
-# === Rules Commands ===
-
-
-@rules_app.command("list")
-def rules_list() -> None:
-    """List all configured rules."""
-    settings = get_settings()
-
-    from email_nurse.config import load_rules
-
-    rules = load_rules(settings.rules_path)
-
-    if not rules:
-        console.print("[yellow]No rules configured[/yellow]")
-        console.print(f"Run [bold]email-nurse init[/bold] to create example rules")
-        return
-
-    table = Table(title="Processing Rules")
-    table.add_column("Priority", style="dim", width=8)
-    table.add_column("Name", style="cyan")
-    table.add_column("Action", style="green")
-    table.add_column("Enabled", width=7)
-    table.add_column("AI", width=4)
-
-    for rule in sorted(rules, key=lambda r: r.get("priority", 100)):
-        action = rule.get("action", {})
-        table.add_row(
-            str(rule.get("priority", 100)),
-            rule.get("name", "unnamed"),
-            action.get("action", "?"),
-            "✓" if rule.get("enabled", True) else "✗",
-            "✓" if rule.get("use_ai", False) else "",
-        )
-
-    console.print(table)
 
 
 @app.command()
