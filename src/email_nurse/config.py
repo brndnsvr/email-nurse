@@ -64,7 +64,6 @@ class Settings(BaseSettings):
         default=Path.home() / ".config" / "email-nurse",
         description="Configuration directory",
     )
-    rules_file: str = Field(default="rules.yaml", description="Rules config filename")
     templates_file: str = Field(
         default="templates.yaml", description="Templates config filename"
     )
@@ -166,11 +165,6 @@ class Settings(BaseSettings):
     )
 
     @property
-    def rules_path(self) -> Path:
-        """Full path to rules file."""
-        return self.config_dir / self.rules_file
-
-    @property
     def templates_path(self) -> Path:
         """Full path to templates file."""
         return self.config_dir / self.templates_file
@@ -190,20 +184,3 @@ class Settings(BaseSettings):
         self.config_dir.mkdir(parents=True, exist_ok=True)
 
 
-def load_rules(path: Path) -> list[dict]:
-    """Load rules from a YAML file."""
-    if not path.exists():
-        return []
-
-    with open(path) as f:
-        data = yaml.safe_load(f) or {}
-
-    return data.get("rules", [])
-
-
-def save_rules(path: Path, rules: list[dict]) -> None:
-    """Save rules to a YAML file."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-
-    with open(path, "w") as f:
-        yaml.dump({"rules": rules}, f, default_flow_style=False, sort_keys=False)
