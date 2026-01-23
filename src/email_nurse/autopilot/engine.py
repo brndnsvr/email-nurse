@@ -536,17 +536,48 @@ class AutopilotEngine:
                 f"(confidence: {decision.confidence:.0%})"
             )
         except Exception as e:
-            # Log the error so users can debug AI failures
-            logger.error(f"AI classification failed: {type(e).__name__}: {e}")
-            print(
-                f"AI classification failed for {email.id}: {type(e).__name__}: {e}",
-                file=sys.stderr,
+            # Track failure count for retry logic
+            failure_count = self.db.increment_rule_failure(
+                email.id, "ai_classification", str(e)
             )
-            return ProcessResult(
-                message_id=email.id,
-                success=False,
-                error=str(e),
-            )
+            max_retries = 3
+
+            if failure_count >= max_retries:
+                # Max retries exceeded - give up and mark as processed
+                logger.warning(
+                    f"AI classification failed {failure_count}x, giving up: "
+                    f"{type(e).__name__}: {e}"
+                )
+                self.db.mark_processed(
+                    message_id=email.id,
+                    mailbox=email.mailbox,
+                    account=email.account,
+                    subject=(email.subject or "")[:100],
+                    sender=(email.sender or "")[:100],
+                    action={
+                        "action": "classification_failed",
+                        "note": "max_retries_exceeded",
+                        "error": str(e)[:200],
+                    },
+                    confidence=0.0,
+                )
+                self.db.clear_rule_failures(email.id)
+                return ProcessResult(
+                    message_id=email.id,
+                    success=False,
+                    error=f"Classification failed after {failure_count} attempts: {e}",
+                )
+            else:
+                # Will retry on next scan
+                logger.error(
+                    f"AI classification failed (attempt {failure_count}/{max_retries}): "
+                    f"{type(e).__name__}: {e}"
+                )
+                return ProcessResult(
+                    message_id=email.id,
+                    success=False,
+                    error=str(e),
+                )
 
         # Check confidence threshold
         if decision.confidence < self.settings.confidence_threshold:
@@ -1255,6 +1286,9 @@ class AutopilotEngine:
             # Mark as processed and log
             self._mark_processed(email, decision)
 
+            # Clear any previous AI action failures on success
+            self.db.clear_rule_failures(email.id)
+
             # Remove from first-seen tracking if email was moved out of inbox
             if decision.action != EmailAction.IGNORE:
                 self.db.remove_first_seen(email.id)
@@ -1274,12 +1308,80 @@ class AutopilotEngine:
 
         except Exception as e:
             logger = get_account_logger(email.account)
-            logger.error(f"Action failed ({action_name}): {e}")
-            return ProcessResult(
-                message_id=email.id,
-                success=False,
-                error=str(e),
-            )
+            error_str = str(e).lower()
+
+            # Classify error type (same patterns as quick rules)
+            is_message_gone = "invalid index" in error_str or "-1719" in error_str
+
+            # Track failure count for retry logic (use "ai_action" as pseudo-rule name)
+            failure_count = self.db.increment_rule_failure(email.id, "ai_action", str(e))
+            max_retries = 3
+
+            if is_message_gone:
+                # Message was already moved/deleted - mark as processed
+                logger.info(
+                    f"AI action ({action_name}): Email no longer in mailbox, "
+                    "marking as processed"
+                )
+                self.db.mark_processed(
+                    message_id=email.id,
+                    mailbox=email.mailbox,
+                    account=email.account,
+                    subject=(email.subject or "")[:100],
+                    sender=(email.sender or "")[:100],
+                    action={
+                        "action": action_name,
+                        "confidence": decision.confidence,
+                        "note": "already_moved",
+                    },
+                    confidence=decision.confidence,
+                )
+                self.db.clear_rule_failures(email.id)
+                return ProcessResult(
+                    message_id=email.id,
+                    success=True,
+                    action=action_name,
+                    target_folder=result_folder,
+                    reason=f"{decision.reasoning} (already moved)",
+                )
+
+            elif failure_count >= max_retries:
+                # Max retries exceeded - give up and mark as processed to stop retry loop
+                logger.warning(
+                    f"AI action ({action_name}) failed {failure_count}x, giving up: {e}"
+                )
+                self.db.mark_processed(
+                    message_id=email.id,
+                    mailbox=email.mailbox,
+                    account=email.account,
+                    subject=(email.subject or "")[:100],
+                    sender=(email.sender or "")[:100],
+                    action={
+                        "action": action_name,
+                        "confidence": decision.confidence,
+                        "note": "max_retries_exceeded",
+                        "error": str(e)[:200],
+                    },
+                    confidence=0.0,
+                )
+                self.db.clear_rule_failures(email.id)
+                return ProcessResult(
+                    message_id=email.id,
+                    success=False,
+                    error=f"Failed after {failure_count} attempts: {e}",
+                )
+
+            else:
+                # Transient or unknown error - will retry on next scan
+                logger.error(
+                    f"AI action ({action_name}) failed "
+                    f"(attempt {failure_count}/{max_retries}): {e}"
+                )
+                return ProcessResult(
+                    message_id=email.id,
+                    success=False,
+                    error=str(e),
+                )
 
     def _mark_processed(self, email: EmailMessage, decision: AutopilotDecision) -> None:
         """Mark an email as processed in the database."""
