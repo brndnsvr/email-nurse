@@ -27,6 +27,7 @@ class EmailMessage:
     is_read: bool
     mailbox: str
     account: str
+    content_loaded: bool = True  # False when fetched via get_messages_metadata()
 
     @property
     def preview(self) -> str:
@@ -139,6 +140,151 @@ def get_messages(
             )
 
     return messages
+
+
+def get_messages_metadata(
+    mailbox: str = "INBOX",
+    account: str | None = None,
+    limit: int = 50,
+    unread_only: bool = False,
+) -> list[EmailMessage]:
+    """
+    Retrieve messages from a mailbox WITHOUT content (metadata only).
+
+    This is significantly faster than get_messages() because fetching
+    message content is the primary bottleneck in AppleScript/Mail.app
+    communication.
+
+    Args:
+        mailbox: Name of the mailbox (default: INBOX).
+        account: Specific account name, or None for all accounts.
+        limit: Maximum number of messages to retrieve.
+        unread_only: If True, only retrieve unread messages.
+
+    Returns:
+        List of EmailMessage objects with content_loaded=False.
+        Call load_message_content() to fetch content when needed.
+    """
+    mailbox_escaped = escape_applescript_string(mailbox)
+
+    if account:
+        account_escaped = escape_applescript_string(account)
+        mailbox_ref = f'mailbox "{mailbox_escaped}" of account "{account_escaped}"'
+    else:
+        mailbox_ref = f'mailbox "{mailbox_escaped}"'
+
+    read_filter = "whose read status is false" if unread_only else ""
+
+    # Metadata-only fetch - NO content extraction
+    script = f'''
+    tell application "Mail"
+        set output to ""
+        set RS to (ASCII character 30)  -- Record Separator
+        set US to (ASCII character 31)  -- Unit Separator
+        set i to 0
+
+        repeat with msg in (messages of {mailbox_ref} {read_filter})
+            -- Early exit after limit reached
+            set i to i + 1
+            if i > {limit} then exit repeat
+
+            set msgId to id of msg as string
+            set msgMessageId to message id of msg
+            set msgSubject to subject of msg
+            set msgSender to sender of msg
+            set msgDateReceived to date received of msg as string
+            set msgDateSent to date sent of msg as string
+            set msgRead to read status of msg
+            set msgMailbox to name of mailbox of msg
+            set msgAccount to name of account of mailbox of msg
+
+            -- Get recipients
+            set recipList to ""
+            repeat with recip in recipients of msg
+                if recipList is not "" then set recipList to recipList & ","
+                set recipList to recipList & (address of recip)
+            end repeat
+
+            -- NO content extraction - this is the key performance optimization
+
+            -- Build record with ASCII control chars as delimiters
+            if output is not "" then set output to output & RS
+            set output to output & msgId & US & msgMessageId & US & msgSubject & US & msgSender & US & recipList & US & msgDateReceived & US & msgDateSent & US & msgRead & US & msgMailbox & US & msgAccount
+        end repeat
+
+        return output
+    end tell
+    '''
+
+    result = run_applescript(script, timeout=120)  # Shorter timeout - metadata is fast
+    if not result:
+        return []
+
+    messages = []
+    for msg_str in result.split(RECORD_SEP):
+        parts = msg_str.split(UNIT_SEP)
+        if len(parts) >= 10:
+            messages.append(
+                EmailMessage(
+                    id=parts[0],
+                    message_id=parts[1],
+                    subject=parts[2],
+                    sender=parts[3],
+                    recipients=parts[4].split(",") if parts[4] else [],
+                    date_received=_parse_date(parts[5]),
+                    date_sent=_parse_date(parts[6]),
+                    content="",  # Not loaded
+                    is_read=parts[7].lower() == "true",
+                    mailbox=parts[8],
+                    account=parts[9],
+                    content_loaded=False,  # Mark as not loaded
+                )
+            )
+
+    return messages
+
+
+def load_message_content(email: EmailMessage) -> str:
+    """
+    Load the content for a message that was fetched via get_messages_metadata().
+
+    This updates the email object in-place AND returns the content.
+
+    Args:
+        email: EmailMessage with content_loaded=False
+
+    Returns:
+        The message content (first 5000 chars).
+        Also sets email.content and email.content_loaded=True.
+    """
+    if email.content_loaded:
+        return email.content
+
+    mailbox_escaped = escape_applescript_string(email.mailbox)
+    account_escaped = escape_applescript_string(email.account)
+
+    script = f'''
+    tell application "Mail"
+        set msg to first message of mailbox "{mailbox_escaped}" of account "{account_escaped}" whose id is {email.id}
+        set msgContent to ""
+        try
+            set msgContent to content of msg
+            if length of msgContent > 5000 then
+                set msgContent to text 1 thru 5000 of msgContent
+            end if
+        end try
+        return msgContent
+    end tell
+    '''
+
+    try:
+        content = run_applescript(script, timeout=30) or ""
+    except Exception:
+        content = ""
+
+    email.content = content
+    email.content_loaded = True
+    return content
 
 
 def get_message_by_id(message_id: str) -> EmailMessage | None:

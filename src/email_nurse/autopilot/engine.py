@@ -23,6 +23,7 @@ from email_nurse.autopilot.models import (
 from email_nurse.mail.actions import (
     LOCAL_ACCOUNT_KEY,
     VIRTUAL_MAILBOXES,
+    PendingMove,
     create_local_mailbox,
     create_mailbox,
     delete_message,
@@ -33,10 +34,16 @@ from email_nurse.mail.actions import (
     get_local_mailboxes,
     mark_as_read,
     move_message,
+    move_messages_batch,
     reply_to_message,
 )
 from email_nurse.mail.accounts import get_accounts
-from email_nurse.mail.messages import EmailMessage, get_messages
+from email_nurse.mail.messages import (
+    EmailMessage,
+    get_messages,
+    get_messages_metadata,
+    load_message_content,
+)
 from email_nurse.storage.database import AutopilotDatabase
 
 if TYPE_CHECKING:
@@ -74,6 +81,8 @@ class AutopilotEngine:
         self._cache_loaded_for: str | None = None  # Track which account cache is loaded for
         # Track folders queued for creation during this run (for notifications)
         self._new_pending_folders: dict[tuple[str, str], list[dict]] = {}  # (folder, account) -> messages
+        # Batch move optimization: defer moves and execute in single AppleScript call
+        self._pending_moves: list[PendingMove] = []
 
     def _build_pim_context(self) -> str:
         """Build context about today's calendar and reminders for AI.
@@ -187,6 +196,25 @@ class AutopilotEngine:
             self._local_mailbox_cache = []
             return []
 
+    def _queue_move(
+        self,
+        message_id: str,
+        target_mailbox: str,
+        target_account: str | None,
+        source_mailbox: str | None,
+        source_account: str | None,
+    ) -> None:
+        """Queue a move operation for batch execution at end of run."""
+        self._pending_moves.append(
+            PendingMove(
+                message_id=message_id,
+                target_mailbox=target_mailbox,
+                target_account=target_account,
+                source_mailbox=source_mailbox,
+                source_account=source_account,
+            )
+        )
+
     def _validate_account_name(self, account_name: str) -> str:
         """Validate account name and return the correctly-cased version.
 
@@ -288,6 +316,9 @@ class AutopilotEngine:
         # Reset pending folder tracking for this run
         self._new_pending_folders = {}
 
+        # Reset pending moves for batch execution
+        self._pending_moves = []
+
         # Load mailbox cache for folder checking
         self._load_mailbox_cache()
 
@@ -380,6 +411,14 @@ class AutopilotEngine:
                     f"[dim]Cleaned up {deleted_failures} stale rule failure records[/dim]"
                 )
 
+        # Execute pending moves in batch (much faster than individual moves)
+        if not dry_run and self._pending_moves:
+            if verbose >= 2:
+                console.print(f"[dim]Executing {len(self._pending_moves)} moves in batch...[/dim]")
+            moved_count = move_messages_batch(self._pending_moves)
+            if verbose >= 2:
+                console.print(f"[dim]Batch moved {moved_count} messages[/dim]")
+
         # Show notification for any new pending folders
         if not dry_run and self._new_pending_folders:
             self._notify_pending_folders(verbose)
@@ -449,7 +488,8 @@ class AutopilotEngine:
                     fetch_limit = min(limit * 3, 500)
                     logger = get_account_logger(account)
                     logger.info(f"Fetching up to {fetch_limit} emails from {actual_mailbox}")
-                    messages = get_messages(
+                    # Use metadata-only fetch for ~20x speedup (content loaded on-demand)
+                    messages = get_messages_metadata(
                         mailbox=actual_mailbox,
                         account=account,
                         limit=fetch_limit,
@@ -522,6 +562,10 @@ class AutopilotEngine:
             return quick_result
 
         # No quick rule matched - use AI
+        # Ensure content is loaded for AI classification (lazy loading optimization)
+        if not email.content_loaded:
+            load_message_content(email)
+
         try:
             # Build enriched instructions with PIM context
             enriched_instructions = self.config.instructions
@@ -1107,13 +1151,13 @@ class AutopilotEngine:
                     if result is not None:
                         return result  # Queued or skipped
 
-                    # Folder resolved - execute move
-                    move_message(
+                    # Folder resolved - queue move for batch execution
+                    self._queue_move(
                         email.id,
                         decision.target_folder,
                         target_account,
-                        source_mailbox=email.mailbox,
-                        source_account=email.account,
+                        email.mailbox,
+                        email.account,
                     )
 
                 case EmailAction.DELETE:
@@ -1138,12 +1182,13 @@ class AutopilotEngine:
                     if result is not None:
                         return result  # Queued or skipped
 
-                    move_message(
+                    # Queue archive move for batch execution
+                    self._queue_move(
                         email.id,
                         "Archive",
                         target_account,
-                        source_mailbox=email.mailbox,
-                        source_account=email.account,
+                        email.mailbox,
+                        email.account,
                     )
 
                 case EmailAction.MARK_READ:
@@ -1467,9 +1512,10 @@ class AutopilotEngine:
                         logger.info(f"Secondary MOVE skipped: folder '{secondary_folder}' issue")
                         return True, f"Secondary MOVE skipped: folder issue"
 
-                    move_message(
+                    # Queue secondary move for batch execution
+                    self._queue_move(
                         email.id, secondary_folder, target_account,
-                        source_mailbox=email.mailbox, source_account=email.account
+                        email.mailbox, email.account
                     )
 
                 case EmailAction.ARCHIVE:
@@ -1482,9 +1528,10 @@ class AutopilotEngine:
                         logger.info("Secondary ARCHIVE skipped: Archive folder issue")
                         return True, "Secondary ARCHIVE skipped"
 
-                    move_message(
+                    # Queue secondary archive for batch execution
+                    self._queue_move(
                         email.id, archive_folder, target_account,
-                        source_mailbox=email.mailbox, source_account=email.account
+                        email.mailbox, email.account
                     )
 
                 case EmailAction.MARK_READ:
@@ -1650,6 +1697,9 @@ class AutopilotEngine:
 
         # Body content matching (OR logic within list)
         if "body_contains" in rule.match:
+            # Load content on-demand (lazy loading optimization)
+            if not email.content_loaded:
+                load_message_content(email)
             body_lower = email.content.lower()
             patterns = rule.match["body_contains"]
             if not any(p.lower() in body_lower for p in patterns):
@@ -1735,12 +1785,13 @@ class AutopilotEngine:
                                 result.rule_matched = rule.name
                                 return result
 
-                            move_message(
+                            # Queue move for batch execution
+                            self._queue_move(
                                 email.id,
                                 rule.folder,
                                 target_account,
-                                source_mailbox=email.mailbox,
-                                source_account=email.account,
+                                email.mailbox,
+                                email.account,
                             )
 
                     case "archive":
@@ -1760,12 +1811,13 @@ class AutopilotEngine:
                             result.rule_matched = rule.name
                             return result
 
-                        move_message(
+                        # Queue archive for batch execution
+                        self._queue_move(
                             email.id,
                             "Archive",
                             target_account,
-                            source_mailbox=email.mailbox,
-                            source_account=email.account,
+                            email.mailbox,
+                            email.account,
                         )
 
                     case "mark_read":
