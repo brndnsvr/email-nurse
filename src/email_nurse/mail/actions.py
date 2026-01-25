@@ -1,5 +1,6 @@
 """Mail.app message actions - move, delete, reply, forward, etc."""
 
+from dataclasses import dataclass
 from difflib import SequenceMatcher
 
 from email_nurse.mail.applescript import escape_applescript_string, run_applescript
@@ -213,6 +214,147 @@ def move_message(
 
     run_applescript(script)
     return True
+
+
+@dataclass
+class PendingMove:
+    """Represents a pending move operation for batch processing."""
+
+    message_id: str
+    target_mailbox: str
+    target_account: str | None
+    source_mailbox: str | None
+    source_account: str | None
+
+
+def move_messages_batch(moves: list[PendingMove]) -> int:
+    """
+    Move multiple messages in batched AppleScript calls.
+
+    Groups messages by (target_mailbox, target_account) and executes one
+    AppleScript call per group. This is much faster than individual moves.
+
+    Args:
+        moves: List of PendingMove objects.
+
+    Returns:
+        Number of messages successfully moved.
+    """
+    if not moves:
+        return 0
+
+    # Group moves by target (mailbox, account) for batch processing
+    from collections import defaultdict
+
+    groups: dict[tuple[str, str | None], list[PendingMove]] = defaultdict(list)
+    for move in moves:
+        key = (move.target_mailbox, move.target_account)
+        groups[key].append(move)
+
+    total_moved = 0
+
+    for (target_mailbox, target_account), group_moves in groups.items():
+        mailbox_escaped = escape_applescript_string(target_mailbox)
+
+        # Build message references - group by source mailbox/account for efficiency
+        # Messages from same source can be referenced more efficiently
+        source_groups: dict[tuple[str | None, str | None], list[str]] = defaultdict(list)
+        for m in group_moves:
+            source_key = (m.source_mailbox, m.source_account)
+            source_groups[source_key].append(m.message_id)
+
+        # Determine target account for AppleScript
+        if target_account == LOCAL_ACCOUNT_KEY:
+            account_escaped = None
+        elif target_account:
+            account_escaped = escape_applescript_string(target_account)
+        else:
+            # Use first source account as fallback
+            first_move = group_moves[0]
+            if first_move.source_account:
+                account_escaped = escape_applescript_string(first_move.source_account)
+            else:
+                account_escaped = None
+
+        # Build AppleScript for this batch
+        if account_escaped:
+            target_ref = f'mailbox "{mailbox_escaped}" of account "{account_escaped}"'
+        else:
+            target_ref = f'mailbox "{mailbox_escaped}"'
+
+        # Build message list and move in one script
+        msg_id_list = [m.message_id for m in group_moves]
+        msg_ids_str = "{" + ", ".join(msg_id_list) + "}"
+
+        # For same-source batches, use optimized lookup
+        # For mixed sources, use global lookup (slower but works)
+        if len(source_groups) == 1:
+            (src_mailbox, src_account) = list(source_groups.keys())[0]
+            if src_mailbox and src_account:
+                src_mailbox_escaped = escape_applescript_string(src_mailbox)
+                src_account_escaped = escape_applescript_string(src_account)
+                script = f'''
+                tell application "Mail"
+                    set targetBox to {target_ref}
+                    set srcBox to mailbox "{src_mailbox_escaped}" of account "{src_account_escaped}"
+                    set msgIds to {msg_ids_str}
+                    set movedCount to 0
+                    repeat with msgId in msgIds
+                        try
+                            set msg to first message of srcBox whose id is msgId
+                            move msg to targetBox
+                            set movedCount to movedCount + 1
+                        end try
+                    end repeat
+                    return movedCount
+                end tell
+                '''
+            else:
+                # Global lookup fallback
+                script = f'''
+                tell application "Mail"
+                    set targetBox to {target_ref}
+                    set msgIds to {msg_ids_str}
+                    set movedCount to 0
+                    repeat with msgId in msgIds
+                        try
+                            set msg to first message whose id is msgId
+                            move msg to targetBox
+                            set movedCount to movedCount + 1
+                        end try
+                    end repeat
+                    return movedCount
+                end tell
+                '''
+        else:
+            # Mixed sources - use global lookup
+            script = f'''
+            tell application "Mail"
+                set targetBox to {target_ref}
+                set msgIds to {msg_ids_str}
+                set movedCount to 0
+                repeat with msgId in msgIds
+                    try
+                        set msg to first message whose id is msgId
+                        move msg to targetBox
+                        set movedCount to movedCount + 1
+                    end try
+                end repeat
+                return movedCount
+            end tell
+            '''
+
+        try:
+            result = run_applescript(script, timeout=120)
+            if result:
+                total_moved += int(result)
+            else:
+                total_moved += len(group_moves)  # Assume success if no error
+        except Exception:
+            # Continue with other groups even if one fails
+            pass
+
+    return total_moved
 
 
 def delete_message(
