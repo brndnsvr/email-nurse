@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 
 CLASSIFICATION_PROMPT = """You are an email classification assistant. Analyze the email and respond with ONLY a JSON object (no other text):
 
-Available actions: move, delete, archive, mark_read, mark_unread, flag, unflag, reply, forward, ignore
+Available actions: move, delete, archive, mark_read, mark_unread, reply, forward, ignore
 
 JSON format:
 {
@@ -36,7 +36,6 @@ Available actions:
 - delete: Delete message
 - archive: Archive message
 - mark_read: Mark as read
-- flag: Flag for attention
 - reply: Generate reply (set reply_content)
 - forward: Forward (set forward_to)
 - ignore: Take no action

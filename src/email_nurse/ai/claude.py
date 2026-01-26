@@ -21,8 +21,6 @@ Available actions:
 - archive: Archive the message
 - mark_read: Mark as read without other action
 - mark_unread: Mark as unread
-- flag: Flag for follow-up
-- unflag: Remove flag
 - reply: Send a reply using a template
 - forward: Forward to specified addresses
 - ignore: Take no action
@@ -80,7 +78,6 @@ Available actions:
 - delete: Delete the message (move to trash)
 - archive: Archive the message
 - mark_read: Mark as read without other action
-- flag: Flag for follow-up or importance
 - reply: Generate and send a reply (requires reply_content)
 - forward: Forward to addresses (requires forward_to list)
 - ignore: Take no action, leave email as-is
@@ -88,12 +85,11 @@ Available actions:
 SECONDARY ACTIONS:
 You can specify a secondary_action for compound operations. This is useful when an email needs two actions.
 
-Valid secondary actions: archive, move, mark_read, flag
+Valid secondary actions: archive, move, mark_read
 Do NOT use reply, forward, or delete as secondary actions.
 
 Common combinations:
 - move + mark_read: Move to a folder and mark as read
-- flag + move: Flag the email and move it to a folder
 
 CRITICAL GUIDELINES:
 1. Follow the user's instructions precisely - they define your behavior
@@ -106,8 +102,7 @@ CRITICAL GUIDELINES:
 4. For REPLY actions: include the full reply text in reply_content
 5. For MOVE actions: specify the exact folder name in target_folder
 6. NEVER delete emails that appear personal, unique, or important
-7. Flag emails that seem important but don't match any instruction
-8. Security-sensitive emails (passwords, 2FA, banking) should be left alone
+7. Security-sensitive emails (passwords, 2FA, banking) should be left alone
 
 Respond with ONLY a valid JSON object (no markdown, no explanation):
 {

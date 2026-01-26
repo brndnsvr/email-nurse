@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 
 CLASSIFICATION_SYSTEM_PROMPT = """You are an email classification assistant. Analyze emails and recommend actions.
 
-Available actions: move, delete, archive, mark_read, mark_unread, flag, unflag, reply, forward, ignore
+Available actions: move, delete, archive, mark_read, mark_unread, reply, forward, ignore
 
 Respond with JSON:
 {
@@ -34,14 +34,13 @@ Available actions:
 - delete: Delete message
 - archive: Archive message
 - mark_read: Mark as read
-- flag: Flag for attention
 - reply: Generate reply (requires reply_content)
 - forward: Forward to addresses (requires forward_to)
 - ignore: Take no action
 
 SECONDARY ACTIONS:
 You can specify a secondary_action for compound operations.
-Valid secondary actions: archive, move, mark_read, flag
+Valid secondary actions: archive, move, mark_read
 Do NOT use reply, forward, or delete as secondary actions.
 
 Common combinations:
