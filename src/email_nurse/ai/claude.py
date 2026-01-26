@@ -84,19 +84,15 @@ Available actions:
 - reply: Generate and send a reply (requires reply_content)
 - forward: Forward to addresses (requires forward_to list)
 - ignore: Take no action, leave email as-is
-- create_reminder: Create a reminder (requires reminder_name)
-- create_event: Create a calendar event (requires event_summary, event_start)
 
 SECONDARY ACTIONS:
 You can specify a secondary_action for compound operations. This is useful when an email needs two actions.
 
-Valid secondary actions: archive, move, mark_read, flag, create_reminder, create_event
+Valid secondary actions: archive, move, mark_read, flag
 Do NOT use reply, forward, or delete as secondary actions.
 
 Common combinations:
-- archive + create_reminder: Archive the email and create a reminder to follow up
 - move + mark_read: Move to a folder and mark as read
-- create_event + archive: Create a calendar event from the email and archive it
 - flag + move: Flag the email and move it to a folder
 
 CRITICAL GUIDELINES:
@@ -120,12 +116,10 @@ Respond with ONLY a valid JSON object (no markdown, no explanation):
     "category": "category_label",
     "reasoning": "brief explanation",
     "target_folder": "FolderName",
-    "secondary_action": "create_reminder",
+    "secondary_action": "mark_read",
     "secondary_target_folder": "Archive",
     "reply_content": "full reply text if action is reply",
-    "forward_to": ["email@example.com"],
-    "reminder_name": "Follow up on X",
-    "reminder_due": "2025-01-15T09:00:00"
+    "forward_to": ["email@example.com"]
 }"""
 
 
