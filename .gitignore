@@ -62,6 +62,9 @@ config/autopilot.yaml
 # Production deployment configs (local backup, not synced to remote)
 deploy/
 
+# Config backups (local only)
+backups/
+
 # Distribution
 *.tar.gz
 *.whl

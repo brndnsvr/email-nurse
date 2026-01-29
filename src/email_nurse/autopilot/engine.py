@@ -83,6 +83,8 @@ class AutopilotEngine:
         self._new_pending_folders: dict[tuple[str, str], list[dict]] = {}  # (folder, account) -> messages
         # Batch move optimization: defer moves and execute in single AppleScript call
         self._pending_moves: list[PendingMove] = []
+        # Track emails to mark as processed after batch move succeeds
+        self._deferred_processed: list[dict] = []
 
     def _build_pim_context(self) -> str:
         """Build context about today's calendar and reminders for AI.
@@ -319,6 +321,9 @@ class AutopilotEngine:
         # Reset pending moves for batch execution
         self._pending_moves = []
 
+        # Reset deferred processed tracking (for quick rules with batched moves)
+        self._deferred_processed = []
+
         # Load mailbox cache for folder checking
         self._load_mailbox_cache()
 
@@ -418,6 +423,13 @@ class AutopilotEngine:
             moved_count = move_messages_batch(self._pending_moves)
             if verbose >= 2:
                 console.print(f"[dim]Batch moved {moved_count} messages[/dim]")
+
+            # Only mark deferred emails as processed if batch move succeeded
+            if moved_count > 0 and self._deferred_processed:
+                for item in self._deferred_processed:
+                    self.db.mark_processed(**item)
+                if verbose >= 2:
+                    console.print(f"[dim]Marked {len(self._deferred_processed)} emails as processed[/dim]")
 
         # Show notification for any new pending folders
         if not dry_run and self._new_pending_folders:
@@ -574,6 +586,14 @@ class AutopilotEngine:
                 enriched_instructions = f"{self.config.instructions}\n{pim_context}"
 
             decision = await self.ai.autopilot_classify(email, enriched_instructions)
+
+            # Hard block: NEVER allow archive action from AI - convert to ignore
+            if decision.action == EmailAction.ARCHIVE:
+                logger.info("AI suggested ARCHIVE, converting to IGNORE (archive disabled)")
+                decision.action = EmailAction.IGNORE
+            if decision.secondary_action == EmailAction.ARCHIVE:
+                decision.secondary_action = None
+
             folder_str = f" -> {decision.target_folder}" if decision.target_folder else ""
             logger.info(
                 f"AI decision: {decision.action.value.upper()}{folder_str} "
@@ -1831,16 +1851,25 @@ class AutopilotEngine:
                     case "ignore":
                         pass  # Do nothing, but don't pass to AI
 
-            # Mark as processed
-            self.db.mark_processed(
-                message_id=email.id,
-                mailbox=email.mailbox,
-                account=email.account,
-                subject=(email.subject or "")[:100],
-                sender=(email.sender or "")[:100],
-                action={"rule": rule.name, "actions": actions},
-                confidence=1.0,
-            )
+            # Defer marking as processed for move/archive actions (batched moves)
+            # so we only mark after the batch move actually succeeds
+            has_deferred_move = "move" in actions or "archive" in actions
+            processed_data = {
+                "message_id": email.id,
+                "mailbox": email.mailbox,
+                "account": email.account,
+                "subject": (email.subject or "")[:100],
+                "sender": (email.sender or "")[:100],
+                "action": {"rule": rule.name, "actions": actions},
+                "confidence": 1.0,
+            }
+
+            if has_deferred_move:
+                # Defer until batch move completes
+                self._deferred_processed.append(processed_data)
+            else:
+                # No batched action, mark immediately
+                self.db.mark_processed(**processed_data)
 
             self.db.log_action(
                 message_id=email.id,
