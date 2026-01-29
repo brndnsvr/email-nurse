@@ -299,18 +299,22 @@ def move_messages_batch(moves: list[PendingMove]) -> int:
                     set srcBox to mailbox "{src_mailbox_escaped}" of account "{src_account_escaped}"
                     set msgIds to {msg_ids_str}
                     set movedCount to 0
+                    -- Get all valid message IDs in source mailbox first
+                    set validIds to id of every message of srcBox
                     repeat with msgId in msgIds
                         try
-                            set msg to first message of srcBox whose id is msgId
-                            move msg to targetBox
-                            set movedCount to movedCount + 1
+                            if validIds contains msgId then
+                                set msg to first message of srcBox whose id is msgId
+                                move msg to targetBox
+                                set movedCount to movedCount + 1
+                            end if
                         end try
                     end repeat
                     return movedCount
                 end tell
                 '''
             else:
-                # Global lookup fallback
+                # Global lookup fallback - skip validation (expensive for global search)
                 script = f'''
                 tell application "Mail"
                     set targetBox to {target_ref}
@@ -321,13 +325,15 @@ def move_messages_batch(moves: list[PendingMove]) -> int:
                             set msg to first message whose id is msgId
                             move msg to targetBox
                             set movedCount to movedCount + 1
+                        on error
+                            -- Message not found, skip silently
                         end try
                     end repeat
                     return movedCount
                 end tell
                 '''
         else:
-            # Mixed sources - use global lookup
+            # Mixed sources - use global lookup, skip validation (expensive)
             script = f'''
             tell application "Mail"
                 set targetBox to {target_ref}
@@ -338,6 +344,8 @@ def move_messages_batch(moves: list[PendingMove]) -> int:
                         set msg to first message whose id is msgId
                         move msg to targetBox
                         set movedCount to movedCount + 1
+                    on error
+                        -- Message not found, skip silently
                     end try
                 end repeat
                 return movedCount
@@ -350,8 +358,12 @@ def move_messages_batch(moves: list[PendingMove]) -> int:
                 total_moved += int(result)
             else:
                 total_moved += len(group_moves)  # Assume success if no error
-        except Exception:
-            # Continue with other groups even if one fails
+        except Exception as e:
+            # Log the error but continue with other groups
+            import logging
+            logging.getLogger("email_nurse").error(
+                f"Batch move failed for {target_mailbox} ({target_account}): {e}"
+            )
             pass
 
     return total_moved

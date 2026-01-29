@@ -36,11 +36,12 @@ Available actions:
 - mark_read: Mark as read
 - reply: Generate reply (requires reply_content)
 - forward: Forward to addresses (requires forward_to)
+- create_reminder: Create a Reminders app reminder (requires reminder_name, optional reminder_due)
 - ignore: Take no action
 
 SECONDARY ACTIONS:
 You can specify a secondary_action for compound operations.
-Valid secondary actions: archive, move, mark_read
+Valid secondary actions: archive, move, mark_read, create_reminder
 Do NOT use reply, forward, or delete as secondary actions.
 
 Common combinations:
@@ -52,6 +53,15 @@ Guidelines:
 3. Express confidence honestly (0.0-1.0)
 4. Never delete personal/important emails
 5. Security emails (passwords, 2FA) should be left alone
+6. For CREATE_REMINDER actions: include reminder_name and optionally reminder_due (ISO 8601)
+
+REMINDER EXCLUSIONS:
+NEVER create reminders for alerts or reports from monitoring/network tools:
+- LibreNMS (any sender or subject referencing LibreNMS)
+- LogicMonitor (any sender or subject referencing LogicMonitor)
+- NtwkCmdr (any sender or subject referencing NtwkCmdr)
+- Rancid (any sender or subject referencing Rancid or RANCID)
+These are automated infrastructure alerts — ignore or handle with other actions only.
 
 Respond with JSON only:
 {
@@ -63,7 +73,9 @@ Respond with JSON only:
     "secondary_action": "mark_read",
     "secondary_target_folder": "Archive",
     "reply_content": "reply text if action is reply",
-    "forward_to": ["email@example.com"]
+    "forward_to": ["email@example.com"],
+    "reminder_name": "Follow up on email subject",
+    "reminder_due": "2025-01-15T09:00:00"
 }"""
 
 
