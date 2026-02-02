@@ -693,7 +693,7 @@ class AutopilotEngine:
                     self.db.add_pending_action(
                         message_id=email.id,
                         email_summary=f"{email.sender}: {email.subject[:50]}",
-                        proposed_action=decision.model_dump(),
+                        proposed_action=decision.model_dump(mode="json"),
                         confidence=decision.confidence,
                         reasoning=decision.reasoning,
                     )
@@ -722,7 +722,7 @@ class AutopilotEngine:
                     self.db.add_pending_action(
                         message_id=email.id,
                         email_summary=f"{email.sender}: {email.subject[:50]}",
-                        proposed_action=decision.model_dump(),
+                        proposed_action=decision.model_dump(mode="json"),
                         confidence=decision.confidence,
                         reasoning=f"[Outbound] {decision.reasoning}",
                     )
@@ -740,7 +740,7 @@ class AutopilotEngine:
                         self.db.add_pending_action(
                             message_id=email.id,
                             email_summary=f"{email.sender}: {email.subject[:50]}",
-                            proposed_action=decision.model_dump(),
+                            proposed_action=decision.model_dump(mode="json"),
                             confidence=decision.confidence,
                             reasoning=f"[Outbound low confidence] {decision.reasoning}",
                         )
@@ -916,7 +916,7 @@ class AutopilotEngine:
             self.db.add_pending_folder_action(
                 message_id=email.id,
                 email_summary=f"{email.sender}: {email.subject[:50]}",
-                proposed_action=decision.model_dump(),
+                proposed_action=decision.model_dump(mode="json"),
                 confidence=decision.confidence,
                 reasoning=(
                     f"[Folder missing] \"{target_folder}\" doesn't exist"
@@ -1456,7 +1456,7 @@ class AutopilotEngine:
             account=email.account,
             subject=(email.subject or "")[:100],
             sender=(email.sender or "")[:100],
-            action=decision.model_dump(),
+            action=decision.model_dump(mode="json"),
             confidence=decision.confidence,
         )
 
