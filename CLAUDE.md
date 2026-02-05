@@ -25,6 +25,7 @@ When answering questions, check both locations as needed. When making changes (a
 **Active launchd services:**
 - `com.email-nurse` — Scheduled autopilot, runs every **5 minutes** (`StartInterval: 300`)
 - `com.email-nurse-digest` — Daily digest email
+- `com.email-nurse-mail-restart` — Mail.app restart service, checks daily at 4am but only executes every 3 days
 
 **Disabled (do not enable):**
 - `com.email-nurse-watcher` — Real-time polling watcher (disabled intentionally)
