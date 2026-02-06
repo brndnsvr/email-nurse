@@ -1854,5 +1854,32 @@ def calendar_create(
         raise typer.Exit(1)
 
 
+@autopilot_app.command("performance")
+def autopilot_performance(
+    hours: Annotated[int, typer.Option("--hours", "-h", help="Hours to review")] = 24,
+    json_output: Annotated[bool, typer.Option("--json", help="Output as JSON")] = False,
+) -> None:
+    """Review autopilot performance metrics.
+
+    Displays performance statistics for message retrieval and processing
+    over the specified time period. Use this to track sysm performance impact.
+
+    Examples:
+        email-nurse autopilot performance              # Last 24 hours
+        email-nurse autopilot performance --hours 12   # Last 12 hours
+        email-nurse autopilot performance --json       # JSON output
+    """
+    from email_nurse.performance_tracker import get_tracker
+
+    tracker = get_tracker()
+
+    if json_output:
+        import json
+        report = tracker.generate_report(hours=hours)
+        print(json.dumps(report, indent=2))
+    else:
+        tracker.print_report(hours=hours)
+
+
 if __name__ == "__main__":
     app()

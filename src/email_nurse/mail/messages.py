@@ -7,6 +7,7 @@ from datetime import datetime
 
 from email_nurse.config import Settings
 from email_nurse.mail.applescript import escape_applescript_string, run_applescript
+from email_nurse.performance_tracker import get_tracker
 
 logger = logging.getLogger(__name__)
 
@@ -193,26 +194,67 @@ def get_messages_metadata(
         List of EmailMessage objects with content_loaded=False.
         Call load_message_content() to fetch content when needed.
     """
-    # Get settings
+    # Get settings and performance tracker
     settings = Settings()
     provider = settings.message_provider
+    tracker = get_tracker()
 
-    # Provider selection
-    if provider == "sysm":
-        from email_nurse.mail.sysm import get_messages_metadata_sysm
-        return get_messages_metadata_sysm(mailbox, account, limit, unread_only)
+    # Track the fetch operation
+    import time
+    start_time = time.time()
+    provider_used = provider
+    messages = []
 
-    elif provider == "hybrid":
-        # Try sysm first with fast timeout, fallback to AppleScript
-        try:
+    try:
+        # Provider selection
+        if provider == "sysm":
             from email_nurse.mail.sysm import get_messages_metadata_sysm
-            logger.info("Trying sysm for message metadata retrieval")
-            return get_messages_metadata_sysm(mailbox, account, limit, unread_only)
-        except Exception as e:
-            logger.warning(f"sysm failed ({e}), falling back to AppleScript")
-            # Fall through to AppleScript below
+            messages = get_messages_metadata_sysm(mailbox, account, limit, unread_only)
+            provider_used = "sysm"
 
-    # Default: AppleScript (existing implementation continues below)
+        elif provider == "hybrid":
+            # Try sysm first with fast timeout, fallback to AppleScript
+            try:
+                from email_nurse.mail.sysm import get_messages_metadata_sysm
+                logger.info("Trying sysm for message metadata retrieval")
+                messages = get_messages_metadata_sysm(mailbox, account, limit, unread_only)
+                provider_used = "sysm"
+            except Exception as e:
+                logger.warning(f"sysm failed ({e}), falling back to AppleScript")
+                provider_used = "applescript"
+                # Fall through to AppleScript below
+                messages = _get_messages_metadata_applescript(mailbox, account, limit, unread_only)
+        else:
+            # Default: AppleScript
+            provider_used = "applescript"
+            messages = _get_messages_metadata_applescript(mailbox, account, limit, unread_only)
+
+        return messages
+    finally:
+        # Log performance metric
+        duration = time.time() - start_time
+        from email_nurse.performance_tracker import OperationMetric
+        from datetime import datetime
+        tracker.log_metric(OperationMetric(
+            timestamp=datetime.now().isoformat(),
+            operation="fetch_messages",
+            provider=provider_used,
+            duration_seconds=round(duration, 3),
+            message_count=len(messages),
+            account=account or "all",
+            mailbox=mailbox,
+            success=True,
+            metadata={"limit": limit, "unread_only": unread_only}
+        ))
+
+
+def _get_messages_metadata_applescript(
+    mailbox: str,
+    account: str | None,
+    limit: int,
+    unread_only: bool,
+) -> list[EmailMessage]:
+    """AppleScript implementation of get_messages_metadata."""
     mailbox_escaped = escape_applescript_string(mailbox)
 
     if account:
