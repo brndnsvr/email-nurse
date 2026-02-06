@@ -269,8 +269,11 @@ def get_messages_metadata_sysm(
     if isinstance(data, dict):
         data = [data]
 
-    # Parse messages
+    # Parse messages — override mailbox from caller since sysm inbox
+    # listing doesn't include it (avoids "INBOX" vs "Inbox" mismatch)
     messages = [parse_sysm_message(msg, content_loaded=False) for msg in data]
+    for msg in messages:
+        msg.mailbox = mailbox
 
     logger.info(f"Retrieved {len(messages)} message(s) metadata via sysm from {mailbox}")
     return messages
@@ -314,8 +317,11 @@ def get_messages_sysm(
     if isinstance(data, dict):
         data = [data]
 
-    # Parse messages
+    # Parse messages — override mailbox from caller since sysm inbox
+    # listing doesn't include it (avoids "INBOX" vs "Inbox" mismatch)
     messages = [parse_sysm_message(msg, content_loaded=True) for msg in data]
+    for msg in messages:
+        msg.mailbox = mailbox
 
     logger.info(f"Retrieved {len(messages)} message(s) with content via sysm from {mailbox}")
     return messages
