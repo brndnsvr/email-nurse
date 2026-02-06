@@ -106,6 +106,12 @@ class Settings(BaseSettings):
     autopilot_batch_size: int = Field(
         default=50, ge=1, description="Number of emails to process per autopilot run"
     )
+    autopilot_chunk_size: int = Field(
+        default=10, ge=1, description="Process emails in chunks of this size, flushing moves between chunks"
+    )
+    autopilot_chunk_sleep: float = Field(
+        default=8.0, ge=0.0, description="Seconds to sleep between processing chunks"
+    )
     autopilot_rate_limit_delay: float = Field(
         default=1.0, ge=0.0, description="Delay between AI API calls (seconds)"
     )

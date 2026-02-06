@@ -217,6 +217,37 @@ class AutopilotEngine:
             )
         )
 
+    def _flush_pending_moves(self, verbose: int = 0) -> int:
+        """Execute pending batch moves and mark deferred emails as processed.
+
+        Called at chunk boundaries and at end of run. Resets pending state
+        after execution so the next chunk starts fresh.
+
+        Returns:
+            Number of messages successfully moved.
+        """
+        if not self._pending_moves:
+            return 0
+
+        if verbose >= 2:
+            console.print(f"[dim]Executing {len(self._pending_moves)} moves in batch...[/dim]")
+        moved_count = move_messages_batch(self._pending_moves)
+        if verbose >= 2:
+            console.print(f"[dim]Batch moved {moved_count} messages[/dim]")
+
+        # Only mark deferred emails as processed if batch move succeeded
+        if moved_count > 0 and self._deferred_processed:
+            for item in self._deferred_processed:
+                self.db.mark_processed(**item)
+            if verbose >= 2:
+                console.print(f"[dim]Marked {len(self._deferred_processed)} emails as processed[/dim]")
+
+        # Reset for next chunk
+        self._pending_moves = []
+        self._deferred_processed = []
+
+        return moved_count
+
     def _validate_account_name(self, account_name: str) -> str:
         """Validate account name and return the correctly-cased version.
 
@@ -344,7 +375,11 @@ class AutopilotEngine:
         if verbose >= 1:
             console.print(f"\n[bold]Processing {len(emails)} emails...[/bold]\n")
 
-        # Process each email
+        # Process emails in chunks — flush moves between chunks for reliability
+        chunk_size = self.settings.autopilot_chunk_size
+        chunk_sleep = self.settings.autopilot_chunk_sleep
+        processed_in_chunk = 0
+
         for email in emails:
             try:
                 process_result = await self._process_email(
@@ -369,12 +404,23 @@ class AutopilotEngine:
                 if self.settings.autopilot_rate_limit_delay > 0:
                     await asyncio.sleep(self.settings.autopilot_rate_limit_delay)
 
+                processed_in_chunk += 1
+
             except Exception as e:
                 result.errors += 1
                 logger = get_account_logger(email.account)
                 logger.error(f"Error processing \"{email.subject[:40]}\": {e}")
                 if verbose >= 1:
                     console.print(f"[red]Error processing {email.subject[:40]}:[/red] {e}")
+                processed_in_chunk += 1
+
+            # Flush moves at chunk boundary
+            if processed_in_chunk >= chunk_size:
+                if not dry_run:
+                    self._flush_pending_moves(verbose)
+                    if chunk_sleep > 0:
+                        await asyncio.sleep(chunk_sleep)
+                processed_in_chunk = 0
 
         # Run inbox aging checks if enabled
         if self.config.inbox_aging_enabled:
@@ -416,20 +462,9 @@ class AutopilotEngine:
                     f"[dim]Cleaned up {deleted_failures} stale rule failure records[/dim]"
                 )
 
-        # Execute pending moves in batch (much faster than individual moves)
-        if not dry_run and self._pending_moves:
-            if verbose >= 2:
-                console.print(f"[dim]Executing {len(self._pending_moves)} moves in batch...[/dim]")
-            moved_count = move_messages_batch(self._pending_moves)
-            if verbose >= 2:
-                console.print(f"[dim]Batch moved {moved_count} messages[/dim]")
-
-            # Only mark deferred emails as processed if batch move succeeded
-            if moved_count > 0 and self._deferred_processed:
-                for item in self._deferred_processed:
-                    self.db.mark_processed(**item)
-                if verbose >= 2:
-                    console.print(f"[dim]Marked {len(self._deferred_processed)} emails as processed[/dim]")
+        # Flush any remaining pending moves from the last chunk
+        if not dry_run:
+            self._flush_pending_moves(verbose)
 
         # Show notification for any new pending folders
         if not dry_run and self._new_pending_folders:
