@@ -1,10 +1,14 @@
 """Mail.app message retrieval and parsing."""
 
+import logging
 import sys
 from dataclasses import dataclass
 from datetime import datetime
 
+from email_nurse.config import Settings
 from email_nurse.mail.applescript import escape_applescript_string, run_applescript
+
+logger = logging.getLogger(__name__)
 
 # ASCII control characters for parsing AppleScript output
 # These are virtually never found in email content, unlike "|||" or ":::"
@@ -43,7 +47,9 @@ def get_messages(
     unread_only: bool = False,
 ) -> list[EmailMessage]:
     """
-    Retrieve messages from a mailbox.
+    Retrieve messages from a mailbox - provider agnostic.
+
+    Uses configured message provider (applescript/sysm/hybrid).
 
     Args:
         mailbox: Name of the mailbox (default: INBOX).
@@ -54,6 +60,26 @@ def get_messages(
     Returns:
         List of EmailMessage objects.
     """
+    # Get settings
+    settings = Settings()
+    provider = settings.message_provider
+
+    # Provider selection
+    if provider == "sysm":
+        from email_nurse.mail.sysm import get_messages_sysm
+        return get_messages_sysm(mailbox, account, limit, unread_only)
+
+    elif provider == "hybrid":
+        # Try sysm first with fast timeout, fallback to AppleScript
+        try:
+            from email_nurse.mail.sysm import get_messages_sysm
+            logger.info("Trying sysm for message retrieval with content")
+            return get_messages_sysm(mailbox, account, limit, unread_only)
+        except Exception as e:
+            logger.warning(f"sysm failed ({e}), falling back to AppleScript")
+            # Fall through to AppleScript below
+
+    # Default: AppleScript (existing implementation continues below)
     mailbox_escaped = escape_applescript_string(mailbox)
 
     if account:
@@ -149,7 +175,9 @@ def get_messages_metadata(
     unread_only: bool = False,
 ) -> list[EmailMessage]:
     """
-    Retrieve messages from a mailbox WITHOUT content (metadata only).
+    Retrieve messages from a mailbox WITHOUT content (metadata only) - provider agnostic.
+
+    Uses configured message provider (applescript/sysm/hybrid).
 
     This is significantly faster than get_messages() because fetching
     message content is the primary bottleneck in AppleScript/Mail.app
@@ -165,6 +193,26 @@ def get_messages_metadata(
         List of EmailMessage objects with content_loaded=False.
         Call load_message_content() to fetch content when needed.
     """
+    # Get settings
+    settings = Settings()
+    provider = settings.message_provider
+
+    # Provider selection
+    if provider == "sysm":
+        from email_nurse.mail.sysm import get_messages_metadata_sysm
+        return get_messages_metadata_sysm(mailbox, account, limit, unread_only)
+
+    elif provider == "hybrid":
+        # Try sysm first with fast timeout, fallback to AppleScript
+        try:
+            from email_nurse.mail.sysm import get_messages_metadata_sysm
+            logger.info("Trying sysm for message metadata retrieval")
+            return get_messages_metadata_sysm(mailbox, account, limit, unread_only)
+        except Exception as e:
+            logger.warning(f"sysm failed ({e}), falling back to AppleScript")
+            # Fall through to AppleScript below
+
+    # Default: AppleScript (existing implementation continues below)
     mailbox_escaped = escape_applescript_string(mailbox)
 
     if account:
@@ -216,7 +264,7 @@ def get_messages_metadata(
     end tell
     '''
 
-    result = run_applescript(script, timeout=120)  # Shorter timeout - metadata is fast
+    result = run_applescript(script, timeout=300)  # Increased for large inboxes (1000+ emails)
     if not result:
         return []
 
@@ -246,7 +294,9 @@ def get_messages_metadata(
 
 def load_message_content(email: EmailMessage) -> str:
     """
-    Load the content for a message that was fetched via get_messages_metadata().
+    Load the content for a message that was fetched via get_messages_metadata() - provider agnostic.
+
+    Uses configured message provider (applescript/sysm/hybrid).
 
     This updates the email object in-place AND returns the content.
 
@@ -254,12 +304,28 @@ def load_message_content(email: EmailMessage) -> str:
         email: EmailMessage with content_loaded=False
 
     Returns:
-        The message content (first 5000 chars).
+        The message content (first 5000 chars for AppleScript, full content for sysm).
         Also sets email.content and email.content_loaded=True.
     """
     if email.content_loaded:
         return email.content
 
+    # Get settings
+    settings = Settings()
+    provider = settings.message_provider
+
+    # Provider selection
+    if provider in ("sysm", "hybrid"):
+        try:
+            from email_nurse.mail.sysm import load_message_content_sysm
+            return load_message_content_sysm(email)
+        except Exception as e:
+            if provider == "sysm":
+                raise
+            # hybrid mode: fall through to AppleScript
+            logger.warning(f"sysm failed ({e}), falling back to AppleScript for content loading")
+
+    # Default: AppleScript (existing implementation continues below)
     mailbox_escaped = escape_applescript_string(email.mailbox)
     account_escaped = escape_applescript_string(email.account)
 
