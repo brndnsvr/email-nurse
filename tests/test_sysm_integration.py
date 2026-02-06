@@ -230,9 +230,10 @@ class TestProviderConfiguration:
     """Tests for provider configuration."""
 
     def test_default_provider_is_applescript(self):
-        """Verify default provider is applescript for backward compatibility."""
-        settings = Settings()
-        assert settings.message_provider == "applescript"
+        """Verify the Field default is applescript for backward compatibility."""
+        # Check the field default directly (production .env may override at runtime)
+        field_default = Settings.model_fields["message_provider"].default
+        assert field_default == "applescript"
 
     def test_sysm_timeout_defaults(self):
         """Verify sysm timeout defaults."""

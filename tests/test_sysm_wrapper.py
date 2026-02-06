@@ -25,29 +25,27 @@ from email_nurse.mail.sysm import (
 class TestIsSysmAvailable:
     """Tests for is_sysm_available()."""
 
-    @patch("email_nurse.mail.sysm.shutil.which")
-    def test_sysm_found(self, mock_which):
-        """Test when sysm is found on PATH."""
-        mock_which.return_value = "/usr/local/bin/sysm"
+    @patch("email_nurse.mail.sysm._find_sysm")
+    def test_sysm_found(self, mock_find):
+        """Test when sysm is found."""
+        mock_find.return_value = "/usr/local/bin/sysm"
         assert is_sysm_available() is True
-        mock_which.assert_called_once_with("sysm")
 
-    @patch("email_nurse.mail.sysm.shutil.which")
-    def test_sysm_not_found(self, mock_which):
-        """Test when sysm is not found on PATH."""
-        mock_which.return_value = None
+    @patch("email_nurse.mail.sysm._find_sysm")
+    def test_sysm_not_found(self, mock_find):
+        """Test when sysm is not found."""
+        mock_find.return_value = None
         assert is_sysm_available() is False
-        mock_which.assert_called_once_with("sysm")
 
 
 class TestRunSysm:
     """Tests for run_sysm()."""
 
-    @patch("email_nurse.mail.sysm.is_sysm_available")
+    @patch("email_nurse.mail.sysm._find_sysm")
     @patch("email_nurse.mail.sysm.subprocess.run")
-    def test_success(self, mock_run, mock_available):
+    def test_success(self, mock_run, mock_find):
         """Test successful sysm command execution."""
-        mock_available.return_value = True
+        mock_find.return_value = "/usr/local/bin/sysm"
         mock_run.return_value.stdout = "test output"
         mock_run.return_value.returncode = 0
 
@@ -56,21 +54,21 @@ class TestRunSysm:
         assert result == "test output"
         mock_run.assert_called_once()
         call_args = mock_run.call_args
-        assert call_args[0][0] == ["sysm", "mail", "inbox", "--json"]
+        assert call_args[0][0] == ["/usr/local/bin/sysm", "mail", "inbox", "--json"]
 
-    @patch("email_nurse.mail.sysm.is_sysm_available")
-    def test_binary_not_found(self, mock_available):
+    @patch("email_nurse.mail.sysm._find_sysm")
+    def test_binary_not_found(self, mock_find):
         """Test error when sysm binary not found."""
-        mock_available.return_value = False
+        mock_find.return_value = None
 
         with pytest.raises(SysmNotFoundError, match="sysm binary not found"):
             run_sysm(["mail", "inbox"])
 
-    @patch("email_nurse.mail.sysm.is_sysm_available")
+    @patch("email_nurse.mail.sysm._find_sysm")
     @patch("email_nurse.mail.sysm.subprocess.run")
-    def test_command_error(self, mock_run, mock_available):
+    def test_command_error(self, mock_run, mock_find):
         """Test error handling for failed command."""
-        mock_available.return_value = True
+        mock_find.return_value = "/usr/local/bin/sysm"
         mock_run.side_effect = CalledProcessError(
             returncode=1,
             cmd=["sysm", "mail", "inbox"],
@@ -80,11 +78,11 @@ class TestRunSysm:
         with pytest.raises(SysmError, match="exit code 1"):
             run_sysm(["mail", "inbox"])
 
-    @patch("email_nurse.mail.sysm.is_sysm_available")
+    @patch("email_nurse.mail.sysm._find_sysm")
     @patch("email_nurse.mail.sysm.subprocess.run")
-    def test_timeout(self, mock_run, mock_available):
+    def test_timeout(self, mock_run, mock_find):
         """Test timeout handling."""
-        mock_available.return_value = True
+        mock_find.return_value = "/usr/local/bin/sysm"
         mock_run.side_effect = TimeoutExpired(
             cmd=["sysm", "mail", "inbox"],
             timeout=30
@@ -127,8 +125,26 @@ class TestRunSysmJson:
 class TestParseDateAndRecipients:
     """Tests for date and recipient parsing helpers."""
 
+    def test_parse_date_applescript_locale_format(self):
+        """Test parsing AppleScript locale-dependent date format."""
+        result = _parse_date("Thursday, February 5, 2026 at 8:44:41 PM")
+        assert result.year == 2026
+        assert result.month == 2
+        assert result.day == 5
+        assert result.hour == 20
+        assert result.minute == 44
+
+    def test_parse_date_applescript_am(self):
+        """Test parsing AppleScript date with AM time."""
+        result = _parse_date("Monday, January 20, 2025 at 10:30:00 AM")
+        assert result.year == 2025
+        assert result.month == 1
+        assert result.day == 20
+        assert result.hour == 10
+        assert result.minute == 30
+
     def test_parse_date_iso8601_with_z(self):
-        """Test parsing ISO 8601 date with Z suffix."""
+        """Test parsing ISO 8601 date with Z suffix (fallback)."""
         result = _parse_date("2025-01-20T10:30:00Z")
         assert result.year == 2025
         assert result.month == 1
@@ -137,7 +153,7 @@ class TestParseDateAndRecipients:
         assert result.minute == 30
 
     def test_parse_date_iso8601_without_z(self):
-        """Test parsing ISO 8601 date without Z suffix."""
+        """Test parsing ISO 8601 date without Z suffix (fallback)."""
         result = _parse_date("2025-01-20T10:30:00")
         assert result.year == 2025
         assert result.month == 1
