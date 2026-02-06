@@ -1,6 +1,8 @@
 """Pytest fixtures for email-nurse tests."""
 
+import json
 from datetime import datetime
+from subprocess import CompletedProcess
 
 import pytest
 
@@ -169,3 +171,93 @@ def spam_email() -> EmailMessage:
         mailbox="INBOX",
         account="Test Account",
     )
+
+
+# --- sysm Fixtures ---
+
+
+@pytest.fixture
+def sysm_single_message_json():
+    """Sample JSON response from sysm for a single message."""
+    return json.dumps({
+        "id": "12345",
+        "subject": "Test Subject",
+        "from": "sender@example.com",
+        "to": "recipient@example.com",
+        "dateReceived": "2025-01-20T10:30:00Z",
+        "dateSent": "2025-01-20T10:25:00Z",
+        "content": "Test email body",
+        "isRead": False,
+        "mailbox": "INBOX",
+        "accountName": "Test Account"
+    })
+
+
+@pytest.fixture
+def sysm_multiple_messages_json():
+    """Sample JSON response from sysm for multiple messages."""
+    return json.dumps([
+        {
+            "id": "12345",
+            "subject": "First Email",
+            "from": "sender1@example.com",
+            "to": "recipient@example.com",
+            "dateReceived": "2025-01-20T10:30:00Z",
+            "dateSent": "2025-01-20T10:25:00Z",
+            "content": "First message",
+            "isRead": False,
+            "mailbox": "INBOX",
+            "accountName": "Test Account"
+        },
+        {
+            "id": "12346",
+            "subject": "Second Email",
+            "from": "sender2@example.com",
+            "to": "recipient@example.com, cc@example.com",
+            "dateReceived": "2025-01-20T11:00:00Z",
+            "dateSent": "2025-01-20T10:55:00Z",
+            "content": "Second message",
+            "isRead": True,
+            "mailbox": "INBOX",
+            "accountName": "Test Account"
+        }
+    ])
+
+
+@pytest.fixture
+def mock_sysm_success(sysm_single_message_json):
+    """Mock successful sysm subprocess call."""
+    def _mock(*args, **kwargs):
+        return CompletedProcess(
+            args=args[0] if args else [],
+            returncode=0,
+            stdout=sysm_single_message_json,
+            stderr=""
+        )
+    return _mock
+
+
+@pytest.fixture
+def mock_sysm_failure():
+    """Mock failed sysm subprocess call."""
+    def _mock(*args, **kwargs):
+        from subprocess import CalledProcessError
+        raise CalledProcessError(
+            returncode=1,
+            cmd=args[0] if args else [],
+            output="",
+            stderr="sysm: command failed"
+        )
+    return _mock
+
+
+@pytest.fixture
+def mock_sysm_timeout():
+    """Mock sysm subprocess timeout."""
+    def _mock(*args, **kwargs):
+        from subprocess import TimeoutExpired
+        raise TimeoutExpired(
+            cmd=args[0] if args else [],
+            timeout=30
+        )
+    return _mock

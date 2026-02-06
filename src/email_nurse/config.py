@@ -113,6 +113,22 @@ class Settings(BaseSettings):
         default=60, ge=1, description="Minutes to cache mailbox list before refreshing"
     )
 
+    # Message retrieval provider settings
+    message_provider: Literal["applescript", "sysm", "hybrid"] = Field(
+        default="applescript",
+        description="Provider for message retrieval (applescript=default, sysm=faster, hybrid=auto-fallback)"
+    )
+    sysm_timeout: int = Field(
+        default=30,
+        ge=1,
+        description="Timeout in seconds for sysm operations"
+    )
+    sysm_fallback_timeout: int = Field(
+        default=5,
+        ge=1,
+        description="Fast timeout for hybrid mode before falling back to AppleScript"
+    )
+
     # Watcher settings (for hybrid trigger mode)
     poll_interval_seconds: int = Field(
         default=30, ge=5, description="Seconds between inbox count checks"
