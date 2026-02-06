@@ -38,13 +38,41 @@ class SysmTimeoutError(SysmError):
     """Raised when sysm times out."""
 
 
+def _find_sysm() -> str | None:
+    """Locate the sysm binary.
+
+    Checks PATH first, then common user-local locations that may not
+    be in launchd's restricted PATH.
+
+    Returns:
+        Full path to sysm binary, or None if not found
+    """
+    # Check PATH first
+    path = shutil.which("sysm")
+    if path:
+        return path
+
+    # Check common locations not in launchd's default PATH
+    from pathlib import Path
+    candidates = [
+        Path.home() / "bin" / "sysm",
+        Path.home() / ".local" / "bin" / "sysm",
+        Path("/opt/homebrew/bin/sysm"),
+    ]
+    for candidate in candidates:
+        if candidate.exists() and candidate.is_file():
+            return str(candidate)
+
+    return None
+
+
 def is_sysm_available() -> bool:
-    """Check if sysm binary is available on PATH.
+    """Check if sysm binary is available.
 
     Returns:
         True if sysm is found, False otherwise
     """
-    return shutil.which("sysm") is not None
+    return _find_sysm() is not None
 
 
 def run_sysm(args: list[str], timeout: int = 30) -> str:
@@ -62,10 +90,11 @@ def run_sysm(args: list[str], timeout: int = 30) -> str:
         SysmTimeoutError: If command times out
         SysmError: If command fails
     """
-    if not is_sysm_available():
-        raise SysmNotFoundError("sysm binary not found on PATH")
+    sysm_path = _find_sysm()
+    if not sysm_path:
+        raise SysmNotFoundError("sysm binary not found on PATH or in ~/bin, ~/.local/bin, /opt/homebrew/bin")
 
-    full_cmd = ["sysm"] + args
+    full_cmd = [sysm_path] + args
     logger.debug(f"Running sysm command: {' '.join(full_cmd)}")
 
     try:
@@ -110,9 +139,12 @@ def run_sysm_json(args: list[str], timeout: int = 30) -> dict | list[dict]:
 
 
 def _parse_date(date_str: str | None) -> datetime | None:
-    """Parse date string from sysm (ISO 8601 format).
+    """Parse date string from sysm.
 
-    sysm returns dates in ISO 8601 format (e.g., "2025-01-20T10:30:00Z").
+    sysm returns dates in AppleScript's locale-dependent format:
+    e.g., "Thursday, February 5, 2026 at 8:44:41 PM"
+
+    Also handles ISO 8601 format as fallback.
 
     Args:
         date_str: Date string from sysm
@@ -124,7 +156,14 @@ def _parse_date(date_str: str | None) -> datetime | None:
         return None
 
     try:
-        # Handle both with and without timezone
+        # Try AppleScript locale format first (most common from sysm)
+        # "Thursday, February 5, 2026 at 8:44:41 PM"
+        return datetime.strptime(date_str, "%A, %B %d, %Y at %I:%M:%S %p")
+    except (ValueError, AttributeError):
+        pass
+
+    try:
+        # Try ISO 8601 with Z suffix
         if date_str.endswith('Z'):
             return datetime.fromisoformat(date_str.replace('Z', '+00:00'))
         return datetime.fromisoformat(date_str)
@@ -156,6 +195,7 @@ def parse_sysm_message(data: dict, content_loaded: bool = True) -> "EmailMessage
 
     Field mapping:
     - sysm "id" → EmailMessage.id
+    - sysm "messageId" → EmailMessage.message_id (RFC 822 Message-ID)
     - sysm "subject" → EmailMessage.subject
     - sysm "from" → EmailMessage.sender
     - sysm "to" → EmailMessage.recipients (parsed from comma-separated)
@@ -165,7 +205,6 @@ def parse_sysm_message(data: dict, content_loaded: bool = True) -> "EmailMessage
     - sysm "mailbox" → EmailMessage.mailbox
     - sysm "accountName" → EmailMessage.account
     - sysm "content" → EmailMessage.content
-    - EmailMessage.message_id = "" (sysm doesn't provide RFC 822 Message-ID)
 
     Args:
         data: JSON object from sysm
@@ -185,9 +224,9 @@ def parse_sysm_message(data: dict, content_loaded: bool = True) -> "EmailMessage
         date_sent=_parse_date(data.get("dateSent")),
         content=data.get("content", "") if content_loaded else "",
         is_read=bool(data.get("isRead", False)),
-        mailbox=data.get("mailbox", ""),
+        mailbox=data.get("mailbox", "INBOX"),
         account=data.get("accountName", ""),
-        message_id="",  # sysm doesn't provide RFC 822 Message-ID
+        message_id=data.get("messageId", ""),
         content_loaded=content_loaded
     )
 
