@@ -231,16 +231,19 @@ class AutopilotEngine:
 
         if verbose >= 2:
             console.print(f"[dim]Executing {len(self._pending_moves)} moves in batch...[/dim]")
-        moved_count = move_messages_batch(self._pending_moves)
+        moved_count, moved_ids = move_messages_batch(self._pending_moves)
         if verbose >= 2:
             console.print(f"[dim]Batch moved {moved_count} messages[/dim]")
 
-        # Only mark deferred emails as processed if batch move succeeded
-        if moved_count > 0 and self._deferred_processed:
+        # Only mark deferred emails as processed if their move actually succeeded
+        if moved_ids and self._deferred_processed:
+            marked = 0
             for item in self._deferred_processed:
-                self.db.mark_processed(**item)
+                if item["message_id"] in moved_ids:
+                    self.db.mark_processed(**item)
+                    marked += 1
             if verbose >= 2:
-                console.print(f"[dim]Marked {len(self._deferred_processed)} emails as processed[/dim]")
+                console.print(f"[dim]Marked {marked}/{len(self._deferred_processed)} emails as processed[/dim]")
 
         # Reset for next chunk
         self._pending_moves = []
@@ -611,7 +614,49 @@ class AutopilotEngine:
         # No quick rule matched - use AI
         # Ensure content is loaded for AI classification (lazy loading optimization)
         if not email.content_loaded:
-            load_message_content(email)
+            try:
+                load_message_content(email)
+            except Exception as e:
+                logger = get_account_logger(email.account)
+                failure_count = self.db.increment_rule_failure(
+                    email.id, "content_loading", str(e)
+                )
+                max_retries = 3
+
+                if failure_count >= max_retries:
+                    logger.warning(
+                        f"Content loading failed {failure_count}x, giving up: "
+                        f"{type(e).__name__}: {e}"
+                    )
+                    self.db.mark_processed(
+                        message_id=email.id,
+                        mailbox=email.mailbox,
+                        account=email.account,
+                        subject=(email.subject or "")[:100],
+                        sender=(email.sender or "")[:100],
+                        action={
+                            "action": "content_load_failed",
+                            "note": "max_retries_exceeded",
+                            "error": str(e)[:200],
+                        },
+                        confidence=0.0,
+                    )
+                    self.db.clear_rule_failures(email.id)
+                    return ProcessResult(
+                        message_id=email.id,
+                        success=False,
+                        error=f"Content loading failed after {failure_count} attempts: {e}",
+                    )
+                else:
+                    logger.error(
+                        f"Content loading failed (attempt {failure_count}/{max_retries}): "
+                        f"{type(e).__name__}: {e}"
+                    )
+                    return ProcessResult(
+                        message_id=email.id,
+                        success=False,
+                        error=str(e),
+                    )
 
         try:
             # Build enriched instructions with PIM context

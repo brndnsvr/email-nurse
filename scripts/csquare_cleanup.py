@@ -492,7 +492,7 @@ def execute_moves(actions: dict[str, list[MessageInfo]], audit: AuditLog):
             ]
 
             try:
-                moved = move_messages_batch(moves)
+                moved, _ = move_messages_batch(moves)
                 done += moved
                 batch_failed = len(batch) - moved
                 failed += batch_failed

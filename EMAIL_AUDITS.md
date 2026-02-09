@@ -2,6 +2,31 @@
 
 <!-- Run /audit-email to add entries -->
 
+### 2026-02-09 11:15 | 72h | Grade: A
+
+```
+total:422 | rules:215 (51%) | ai:207 (49%)
+delete:5 | move:350 | ignore:66 | create_reminder:1
+folders: LogicMonitor:98 Career:27 CSQR-Support:18 Marketing:11 Real-Estate:9 GitHub:8 Orders:7 Newsletters:5 Social:3 Script-Logs:2
+top-rules: LogicMonitor-Alerts:98 LinkedIn-Jobs:26 Csquare-Support-Tickets:9 Csquare-SHPC-Support:9 Redfin:8
+```
+
+**Issues:**
+- Duplicate processing: 48 extra audit entries across 376 unique emails (12.8%). Caused by sysm move timeouts — batched moves fail, emails aren't marked processed, and get re-picked-up next cycle. Most duplicates are LogicMonitor alerts retried 3-6x before succeeding.
+
+Delete review (5) — all correct:
+- Unsolicited recruiter spam (Manasa Softcom via oorwinmail.com)
+- Brick App spam (rule)
+- Unsolicited web dev services solicitation
+- Phishing email impersonating iCloud (babsmad@me.com with clickme.thryv.com link)
+- Rocket Mortgage sweepstakes with missing name field ("Hi ,")
+
+AI routing spot-check (20 moves): All correctly categorized. Marketing emails (Skylight, Dollar Shave Club, Hims, Walgreens, Verizon, ID.me, Airtable x3, Electrify America, Fresh Clean Threads, American Home Design, GitLab webinar) → Marketing. Newsletters (Schwab Market Update, Rep. Tanner Substack) → Newsletters. Notifications (Glassdoor digest, NFHS Network, Alpaca, GitLab commits) → Notifications.
+
+Ignores appropriate (66): School progress reports for Trent S. and Ayden S. (personal/family), SimpliSafe security alert, Electrify America account verification, Zayo meeting coordination threads, CSquare work correspondence, Rancid infrastructure alerts, State Farm claim, RSAC 2026 calendar invite, Venmo payment. All require human attention or are deliberately left in inbox.
+
+---
+
 ### 2026-02-04 10:45 | 8h | Grade: A
 
 ```
