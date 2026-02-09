@@ -1,4 +1,4 @@
-"""Integration tests for sysm message provider."""
+"""Integration tests for sysm message provider and engine retry logic."""
 
 from unittest.mock import MagicMock, patch
 
@@ -308,3 +308,217 @@ class TestEndToEnd:
         assert messages == []
         assert mock_sysm.called
         assert mock_applescript.called
+
+
+class TestContentLoadingRetry:
+    """Tests for content loading retry ceiling in AutopilotEngine."""
+
+    @pytest.mark.asyncio
+    async def test_content_loading_retries_then_gives_up(self, sample_email):
+        """After 3 content loading failures, email is marked processed and stops retrying."""
+        from email_nurse.autopilot.engine import AutopilotEngine
+
+        sample_email.content_loaded = False
+
+        engine = MagicMock(spec=AutopilotEngine)
+        engine.db = MagicMock()
+        engine.config = MagicMock()
+        engine.settings = MagicMock()
+        engine._apply_quick_rules.return_value = None
+
+        # Simulate increment_rule_failure returning 3 (max retries reached)
+        engine.db.increment_rule_failure.return_value = 3
+
+        with patch(
+            "email_nurse.autopilot.engine.load_message_content",
+            side_effect=TimeoutError("sysm timed out"),
+        ), patch(
+            "email_nurse.autopilot.engine.get_account_logger",
+            return_value=MagicMock(),
+        ):
+            result = await AutopilotEngine._process_email(
+                engine, sample_email, dry_run=False, interactive=False, auto_create=False
+            )
+
+        assert result.success is False
+        assert "Content loading failed after 3 attempts" in result.error
+        engine.db.mark_processed.assert_called_once()
+        call_kwargs = engine.db.mark_processed.call_args[1]
+        assert call_kwargs["action"]["action"] == "content_load_failed"
+        engine.db.clear_rule_failures.assert_called_once_with(sample_email.id)
+
+    @pytest.mark.asyncio
+    async def test_content_loading_retries_under_limit(self, sample_email):
+        """Before 3 failures, email is NOT marked processed (will retry next cycle)."""
+        from email_nurse.autopilot.engine import AutopilotEngine
+
+        sample_email.content_loaded = False
+
+        engine = MagicMock(spec=AutopilotEngine)
+        engine.db = MagicMock()
+        engine.config = MagicMock()
+        engine.settings = MagicMock()
+        engine._apply_quick_rules.return_value = None
+
+        # Simulate increment_rule_failure returning 1 (first failure)
+        engine.db.increment_rule_failure.return_value = 1
+
+        with patch(
+            "email_nurse.autopilot.engine.load_message_content",
+            side_effect=TimeoutError("sysm timed out"),
+        ), patch(
+            "email_nurse.autopilot.engine.get_account_logger",
+            return_value=MagicMock(),
+        ):
+            result = await AutopilotEngine._process_email(
+                engine, sample_email, dry_run=False, interactive=False, auto_create=False
+            )
+
+        assert result.success is False
+        # Should NOT mark as processed — will retry next cycle
+        engine.db.mark_processed.assert_not_called()
+        engine.db.clear_rule_failures.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_content_loading_success_proceeds_to_ai(self, sample_email):
+        """When content loads successfully, processing continues to AI classification."""
+        from unittest.mock import AsyncMock
+        from email_nurse.autopilot.engine import AutopilotEngine
+
+        sample_email.content_loaded = False
+
+        engine = MagicMock(spec=AutopilotEngine)
+        engine.db = MagicMock()
+        engine.config = MagicMock()
+        engine.config.instructions = "test"
+        engine.settings = MagicMock()
+        engine._apply_quick_rules.return_value = None
+        engine._build_pim_context.return_value = ""
+
+        # AI classification fails — we just need to verify content loading succeeded
+        # and processing reached the AI step
+        engine.ai = MagicMock()
+        engine.ai.autopilot_classify = AsyncMock(side_effect=RuntimeError("AI unavailable"))
+        engine.db.increment_rule_failure.return_value = 1
+
+        with patch(
+            "email_nurse.autopilot.engine.load_message_content",
+        ) as mock_load, patch(
+            "email_nurse.autopilot.engine.get_account_logger",
+            return_value=MagicMock(),
+        ):
+            result = await AutopilotEngine._process_email(
+                engine, sample_email, dry_run=False, interactive=False, auto_create=False
+            )
+
+        # Content should have been loaded successfully
+        mock_load.assert_called_once_with(sample_email)
+        # Failure should be for AI classification, not content loading
+        engine.db.increment_rule_failure.assert_called_once()
+        call_args = engine.db.increment_rule_failure.call_args
+        assert call_args[0][1] == "ai_classification"
+
+
+class TestBatchMoveTracking:
+    """Tests for per-group batch move tracking."""
+
+    def test_batch_move_returns_moved_ids_on_success(self):
+        """Successful batch move returns all message IDs."""
+        from email_nurse.mail.actions import PendingMove, move_messages_batch
+
+        moves = [
+            PendingMove(
+                message_id="100",
+                target_mailbox="Archive",
+                target_account="iCloud",
+                source_mailbox="INBOX",
+                source_account="iCloud",
+            ),
+            PendingMove(
+                message_id="101",
+                target_mailbox="Archive",
+                target_account="iCloud",
+                source_mailbox="INBOX",
+                source_account="iCloud",
+            ),
+        ]
+
+        with patch("email_nurse.mail.actions.run_applescript", return_value="2"):
+            count, ids = move_messages_batch(moves)
+
+        assert count == 2
+        assert ids == {"100", "101"}
+
+    def test_batch_move_excludes_failed_group_ids(self):
+        """Failed group's message IDs are excluded from moved_ids."""
+        from email_nurse.mail.actions import PendingMove, move_messages_batch
+
+        moves = [
+            PendingMove(
+                message_id="100",
+                target_mailbox="Archive",
+                target_account="iCloud",
+                source_mailbox="INBOX",
+                source_account="iCloud",
+            ),
+            PendingMove(
+                message_id="200",
+                target_mailbox="Trash",
+                target_account="iCloud",
+                source_mailbox="INBOX",
+                source_account="iCloud",
+            ),
+        ]
+
+        call_count = 0
+
+        def mock_applescript(script, timeout=None):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return "1"  # First group succeeds
+            raise TimeoutError("AppleScript timed out")  # Second group fails
+
+        with patch("email_nurse.mail.actions.run_applescript", side_effect=mock_applescript):
+            count, ids = move_messages_batch(moves)
+
+        assert count == 1
+        # Only one group's IDs should be in moved_ids
+        assert len(ids) == 1
+
+    def test_batch_move_empty_returns_empty(self):
+        """Empty move list returns zero count and empty set."""
+        from email_nurse.mail.actions import move_messages_batch
+
+        count, ids = move_messages_batch([])
+        assert count == 0
+        assert ids == set()
+
+    def test_batch_move_partial_move_excludes_ids(self):
+        """Partial move (count < group size) excludes IDs conservatively."""
+        from email_nurse.mail.actions import PendingMove, move_messages_batch
+
+        moves = [
+            PendingMove(
+                message_id="100",
+                target_mailbox="Archive",
+                target_account="iCloud",
+                source_mailbox="INBOX",
+                source_account="iCloud",
+            ),
+            PendingMove(
+                message_id="101",
+                target_mailbox="Archive",
+                target_account="iCloud",
+                source_mailbox="INBOX",
+                source_account="iCloud",
+            ),
+        ]
+
+        # AppleScript reports only 1 of 2 moved
+        with patch("email_nurse.mail.actions.run_applescript", return_value="1"):
+            count, ids = move_messages_batch(moves)
+
+        assert count == 1
+        # Can't tell which moved, so neither should be in moved_ids
+        assert ids == set()

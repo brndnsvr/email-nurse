@@ -227,7 +227,7 @@ class PendingMove:
     source_account: str | None
 
 
-def move_messages_batch(moves: list[PendingMove]) -> int:
+def move_messages_batch(moves: list[PendingMove]) -> tuple[int, set[str]]:
     """
     Move multiple messages in batched AppleScript calls.
 
@@ -238,10 +238,11 @@ def move_messages_batch(moves: list[PendingMove]) -> int:
         moves: List of PendingMove objects.
 
     Returns:
-        Number of messages successfully moved.
+        Tuple of (total_moved_count, set of successfully moved message IDs).
+        Message IDs are only included when the entire group succeeds.
     """
     if not moves:
-        return 0
+        return 0, set()
 
     # Group moves by target (mailbox, account) for batch processing
     from collections import defaultdict
@@ -252,8 +253,10 @@ def move_messages_batch(moves: list[PendingMove]) -> int:
         groups[key].append(move)
 
     total_moved = 0
+    moved_ids: set[str] = set()
 
     for (target_mailbox, target_account), group_moves in groups.items():
+        group_msg_ids = {m.message_id for m in group_moves}
         mailbox_escaped = escape_applescript_string(target_mailbox)
 
         # Build message references - group by source mailbox/account for efficiency
@@ -355,18 +358,23 @@ def move_messages_batch(moves: list[PendingMove]) -> int:
         try:
             result = run_applescript(script, timeout=120)
             if result:
-                total_moved += int(result)
+                count = int(result)
+                total_moved += count
+                if count == len(group_moves):
+                    moved_ids.update(group_msg_ids)
+                # If partial (count < len), we can't tell which moved,
+                # so conservatively don't add to moved_ids
             else:
                 total_moved += len(group_moves)  # Assume success if no error
+                moved_ids.update(group_msg_ids)
         except Exception as e:
             # Log the error but continue with other groups
             import logging
             logging.getLogger("email_nurse").error(
                 f"Batch move failed for {target_mailbox} ({target_account}): {e}"
             )
-            pass
 
-    return total_moved
+    return total_moved, moved_ids
 
 
 def delete_message(
