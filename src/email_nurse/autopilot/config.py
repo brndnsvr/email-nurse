@@ -42,7 +42,7 @@ class QuickRule(BaseModel):
 
     name: str = Field(description="Human-readable rule name")
     match: dict[str, list[str]] = Field(
-        description="Match conditions: sender_contains, subject_contains, subject_contains_all, sender_domain, body_contains"
+        description="Match conditions: sender_contains, subject_contains, subject_contains_all, sender_domain, body_contains, header_contains"
     )
     action: RuleAction | None = Field(
         default=None,

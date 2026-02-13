@@ -43,6 +43,7 @@ from email_nurse.mail.messages import (
     get_messages,
     get_messages_metadata,
     load_message_content,
+    load_message_headers,
 )
 from email_nurse.storage.database import AutopilotDatabase
 
@@ -1803,6 +1804,15 @@ class AutopilotEngine:
             body_lower = email.content.lower()
             patterns = rule.match["body_contains"]
             if not any(p.lower() in body_lower for p in patterns):
+                return False
+
+        # Header content matching (OR logic within list)
+        if "header_contains" in rule.match:
+            if not email.headers_loaded:
+                load_message_headers(email)
+            headers_lower = email.headers.lower()
+            patterns = rule.match["header_contains"]
+            if not any(p.lower() in headers_lower for p in patterns):
                 return False
 
         # Subject matching with AND logic (ALL patterns must match)

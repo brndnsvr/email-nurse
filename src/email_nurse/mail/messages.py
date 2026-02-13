@@ -33,6 +33,8 @@ class EmailMessage:
     mailbox: str
     account: str
     content_loaded: bool = True  # False when fetched via get_messages_metadata()
+    headers: str = ""
+    headers_loaded: bool = False
 
     @property
     def preview(self) -> str:
@@ -393,6 +395,47 @@ def load_message_content(email: EmailMessage) -> str:
     email.content = content
     email.content_loaded = True
     return content
+
+
+def load_message_headers(email: EmailMessage) -> str:
+    """
+    Load raw RFC headers for a message via AppleScript.
+
+    This updates the email object in-place AND returns the headers.
+    Always uses AppleScript since sysm doesn't support header retrieval.
+
+    Args:
+        email: EmailMessage to load headers for.
+
+    Returns:
+        The raw headers string.
+        Also sets email.headers and email.headers_loaded=True.
+    """
+    if email.headers_loaded:
+        return email.headers
+
+    mailbox_escaped = escape_applescript_string(email.mailbox)
+    account_escaped = escape_applescript_string(email.account)
+
+    script = f'''
+    tell application "Mail"
+        set msg to first message of mailbox "{mailbox_escaped}" of account "{account_escaped}" whose id is {email.id}
+        set msgHeaders to ""
+        try
+            set msgHeaders to all headers of msg
+        end try
+        return msgHeaders
+    end tell
+    '''
+
+    try:
+        headers = run_applescript(script, timeout=30) or ""
+    except Exception:
+        headers = ""
+
+    email.headers = headers
+    email.headers_loaded = True
+    return headers
 
 
 def get_message_by_id(message_id: str) -> EmailMessage | None:
