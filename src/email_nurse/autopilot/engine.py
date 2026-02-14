@@ -86,6 +86,9 @@ class AutopilotEngine:
         self._pending_moves: list[PendingMove] = []
         # Track emails to mark as processed after batch move succeeds
         self._deferred_processed: list[dict] = []
+        # In-run dedup: track message IDs processed during this run to prevent
+        # re-processing before batch flush marks them in the database
+        self._processed_this_run: set[int] = set()
 
     def _build_pim_context(self) -> str:
         """Build context about today's calendar and reminders for AI.
@@ -395,9 +398,11 @@ class AutopilotEngine:
                 elif process_result.queued:
                     result.actions_queued += 1
                     result.emails_processed += 1
+                    self._processed_this_run.add(email.id)
                 elif process_result.success:
                     result.actions_executed += 1
                     result.emails_processed += 1
+                    self._processed_this_run.add(email.id)
                 else:
                     result.errors += 1
 
@@ -566,10 +571,16 @@ class AutopilotEngine:
 
         # Filter out already processed and apply age filter
         unprocessed = []
+        seen_this_fetch: set[int] = set()
         for email in all_emails:
-            # Skip if already processed
-            if email.id in processed_ids:
+            # Skip if already processed (DB) or handled earlier this run
+            if email.id in processed_ids or email.id in self._processed_this_run:
                 continue
+
+            # Skip duplicates within this fetch (Mail.app can return the same message twice)
+            if email.id in seen_this_fetch:
+                continue
+            seen_this_fetch.add(email.id)
 
             # Skip if too old
             if email.date_received and email.date_received < cutoff_date:
