@@ -2,6 +2,31 @@
 
 <!-- Run /audit-email to add entries -->
 
+### 2026-02-13 17:00 | 48h | Grade: A
+
+```
+total:8367 | rules:7791 (93%) | ai:576 (7%)
+delete:3 | move:8210 | ignore:150 | create_reminder:4
+folders: LogicMonitor:6652 CSQR-Support:976 GitHub:28 Career:20 Marketing:14 Healthcare:13 Real-Estate:7 Newsletters:7 Config-Diffs:4 Script-Logs:3
+top-rules: LogicMonitor-Alerts:6652 Csquare-Support-Tickets:505 Csquare-SHPC-Support:471 GitHub:28 LinkedIn-Jobs:18
+```
+
+**Issues:**
+- Massive LogicMonitor alert volume (6652 moves in 48h vs ~134 in the prior 72h audit). Likely an infrastructure alert storm — worth investigating LM for noisy monitors or alert suppression.
+- Duplicate processing still occurring: multiple ignore/move entries for the same message_id visible in ignores and AI moves (e.g., same SPFBL, work threads, Sneds Tour emails processed 2-3x each).
+- SPFBL abuse report routing inconsistency: some moved to Notifications, others ignored and left in inbox. AI reasoning varies between "automated notification" and "security matter needing review." Consider a quick-rule to normalize.
+
+Delete review (3) — all correct:
+- Obvious spam with misleading health claims, clickbait subject using Unicode chars to evade filters (autopilot)
+- Brick App spam (rule)
+- Sonic restaurant unsolicited survey email (autopilot)
+
+AI routing spot-check (20 moves): All correctly categorized. SPFBL abuse reports → Notifications. Atlassian Team '26, Mimecast sales outreach, Google Cloud conference, Birdogs, Fresh Clean Threads promos → Marketing. Zed Industries release notes → Newsletters. CSquare IT notification → Notifications. Minor inconsistency: Zed release notes categorized as Newsletters on one run and Notifications on another.
+
+Ignores appropriate (150): Work email threads (DFW Foundation servers SSH troubleshooting, CS2137257 support case, Fabric Discussion), Christie Seaver personal/business emails, Sneds Tour golf registration confirmations, appointment reminders (eye doctor, Performance Medicine), calendar invites (Csquare Fabric Discussion), Have I Been Pwned security alerts, Walgreens pharmacy, SiriusXM subscription notice, Rancid infrastructure alerts, Microsoft Family Safety, LogicMonitor sales engineer correspondence (correctly distinguished from LM alerts), NtwkCmdr waitlist confirmation. Rule-based ignores: CSQUARE Leadership, Apple News/Inside, daily.dev Digest, USPS Informed Delivery, Gate City UMC, Chase Bank, Eastman Credit Union, Hostinger.
+
+---
+
 ### 2026-02-09 11:15 | 72h | Grade: A
 
 ```
