@@ -2,6 +2,28 @@
 
 <!-- Run /audit-email to add entries -->
 
+### 2026-02-14 13:30 | 12h | Grade: A
+
+```
+total:65 | rules:39 (60%) | ai:26 (40%)
+delete:2 | move:59 | ignore:4
+folders: Config-Diffs:27 Career:4 Marketing:2 Script-Logs:1 Real-Estate:1
+top-rules: Rancid-Config-Diffs:27 LinkedIn-Jobs:4 Kickstarter-Marketing:2 USPS-Informed-Delivery:1 Redfin:1
+```
+
+**Issues:**
+- Minor: Welcome to the Jungle job alert (msg 35240) routed to Newsletters instead of Career. LinkedIn Jobs rule already sends job alerts to Career — consider a quick-rule for Welcome to the Jungle to match.
+
+Delete review (2) — all correct:
+- Brick App spam (rule)
+- Sonic restaurant unsolicited survey via Qualtrics (autopilot)
+
+AI routing spot-check (20 moves): All marketing/promo correctly routed to Marketing (Dollar Shave Club, Smoothie King, BackerHome, Fresh Clean Threads, Mensa, Zenni Optical x2, Petlibro, Vivobarefoot, SimpliSafe, TryHackMe, Krispy Kreme, Johnny Brusco's, Walgreens). Newsletters correctly identified (AINews/Substack, Brander Group, Maker Shed). DEV Community challenge correctly sent to Marketing. One MS Outlook notification correctly routed to Notifications.
+
+Ignores appropriate (4): Apple News Digest (rule), USPS Informed Delivery (rule), Apple Inside (rule), Rancid unattended-upgrades alert correctly ignored per exclusion rules (autopilot).
+
+---
+
 ### 2026-02-13 17:00 | 48h | Grade: A
 
 ```

@@ -1,13 +1,13 @@
 #!/bin/bash
 # Restart Mail.app and autopilot service
-# Runs once every 3 days to clear sync issues and refresh Mail.app state
+# Runs every other day to clear sync issues and refresh Mail.app state
 
 set -euo pipefail
 
 # Check if we should run (only every 3 days)
 TIMESTAMP_FILE="$HOME/.config/email-nurse/last-mail-restart"
 CURRENT_TIME=$(date +%s)
-RUN_INTERVAL=$((3 * 24 * 60 * 60))  # 3 days in seconds
+RUN_INTERVAL=$((46 * 60 * 60))  # 46 hours in seconds
 
 if [ -f "$TIMESTAMP_FILE" ]; then
     LAST_RUN=$(cat "$TIMESTAMP_FILE")
@@ -15,7 +15,7 @@ if [ -f "$TIMESTAMP_FILE" ]; then
 
     if [ "$TIME_SINCE_LAST" -lt "$RUN_INTERVAL" ]; then
         HOURS_REMAINING=$(( (RUN_INTERVAL - TIME_SINCE_LAST) / 3600 ))
-        echo "$(date): Skipping restart - last run was $(($TIME_SINCE_LAST / 3600)) hours ago (need 72 hours)"
+        echo "$(date): Skipping restart - last run was $(($TIME_SINCE_LAST / 3600)) hours ago (need 46 hours)"
         echo "$(date): Next restart in approximately $HOURS_REMAINING hours"
         exit 0
     fi
