@@ -2,6 +2,25 @@
 
 <!-- Run /audit-email to add entries -->
 
+### 2026-02-16 12:00 | 12h | Grade: A
+
+```
+total:44 | rules:36 (82%) | ai:8 (18%)
+delete:0 | move:40 | ignore:4
+folders: Config-Diffs:17 GitHub:12 CSQR-Support:2 Script-Logs:1 Real-Estate:1 Marketing:1
+top-rules: Rancid-Config-Diffs:17 GitHub:12 Csquare-SHPC-Support:2 Chase-Bank:2 Redfin:1
+```
+
+**Issues:** None
+
+Delete review (0) — no deletes this window.
+
+AI routing spot-check (6 moves): All correct. Krispy Kreme, Hilton Grand Vacations → Marketing. TLDR, Hackr.io → Newsletters. Audible credits, TryHackMe Valentine CTF event → Notifications.
+
+Ignores appropriate (4): Chase Bank x2 (rule). PowerSchool progress report and attendance report for student correctly left in inbox as personal/educational (autopilot).
+
+---
+
 ### 2026-02-14 13:30 | 12h | Grade: A
 
 ```
