@@ -2,6 +2,45 @@
 
 <!-- Run /audit-email to add entries -->
 
+### 2026-02-17 15:30 | 8h | Grade: A
+
+```
+total:105 | rules:58 (55%) | ai:47 (45%)
+delete:1 | move:91 | ignore:13
+folders: Config-Diffs:25 CSQR-Support:12 Marketing:4 Career:4 Orders:2 GitHub:2 Social:1 Script-Logs:1 Real-Estate:1
+top-rules: Rancid-Config-Diffs:25 Csquare-Support-Tickets:8 LinkedIn-Jobs:4 Csquare-SHPC-Support:4 Kickstarter-Marketing:2
+```
+
+**Issues:** None
+
+Delete review (1) — correct:
+- Brick App spam (rule)
+
+AI routing spot-check (20 moves): All correctly categorized. Marketing: Walgreens Photo, Dollar Shave Club, Lucasfilm/Disney, HBO Max, Canva Create, Samsung, Johnny Brusco's, Home Depot, Electrify America, ESET webinar, Fresh Clean Threads. Newsletters: Make: x2, CDW BizTech, Vivobarefoot, NVIDIA GTC, NFHS Network. Finance: Principal Financial Group 401k, Schwab Market Update. Notifications: Chess.com.
+
+Ignores appropriate (13): Work emails from CSquare colleagues (Cindy Cortazzo, Nebyou Gebreyohannes) correctly left in inbox. Healthcare: Walgreens prescription refill, provider survey. Account: Spotify activation. Infrastructure: squid-mon x2, Rancid unattended-upgrades. Rule-based: CSQUARE Leadership, Chase Bank, Apple News Digest, daily.dev Digest, USPS Informed Delivery.
+
+---
+
+### 2026-02-17 10:00 | 8h | Grade: A
+
+```
+total:33 | rules:21 (64%) | ai:12 (36%)
+delete:0 | move:25 | ignore:8
+folders: Config-Diffs:17 Marketing:3 Newsletters:2 Script-Logs:1 Real-Estate:1 Notifications:1
+top-rules: Rancid-Config-Diffs:17 daily.dev-Digest:1 USPS-Informed-Delivery:1 Redfin:1 FD-Checker-Logs:1
+```
+
+**Issues:** None
+
+Delete review (0) — no deletes this window.
+
+AI routing spot-check (6 moves): All correct. Chick-fil-A, Krispy Kreme, Hilton Grand Vacations → Marketing. TLDR newsletter, Bouqs Co → Newsletters. Airbnb terms/policy update → Notifications.
+
+Ignores appropriate (8): Walgreens prescription refill, Spotify account activation, healthcare provider survey — all correctly left for user action. Infrastructure alerts (squid-mon x2, Rancid unattended-upgrades) correctly ignored per exclusion rules. Rule-based ignores: daily.dev Digest, USPS Informed Delivery.
+
+---
+
 ### 2026-02-16 12:00 | 12h | Grade: A
 
 ```
