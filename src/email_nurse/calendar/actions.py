@@ -1,16 +1,14 @@
 """Write operations for Apple Calendar.app.
 
-This module provides functions to create calendar events via AppleScript
-integration with macOS Calendar.app.
-
-Note: Direct event creation may not work on all macOS versions/configurations.
-If it fails, see: https://mjtsai.com/blog/2024/10/23/the-sad-state-of-mac-calendar-scripting/
+Uses sysm CLI for event creation. AppleScript is kept for delete_event()
+because sysm deletes by title (not UID), which is a different API.
 """
 
 from datetime import datetime, timedelta
 
 from email_nurse.applescript import AppleScriptError, escape_applescript_string, run_applescript
 from email_nurse.calendar.calendars import CalendarAppError, _check_calendar_running
+from email_nurse.mail.sysm import SysmError, create_event_sysm
 
 
 def create_event(
@@ -23,7 +21,7 @@ def create_event(
     all_day: bool = False,
 ) -> str:
     """
-    Create a calendar event.
+    Create a calendar event via sysm.
 
     Args:
         summary: Event title.
@@ -38,64 +36,30 @@ def create_event(
         The UID of the created event.
 
     Raises:
-        CalendarAppNotRunningError: If Calendar.app is not running.
         CalendarAppError: If event creation fails.
-
-    Example:
-        >>> from datetime import datetime, timedelta
-        >>> start = datetime.now() + timedelta(days=1, hours=14)
-        >>> event_id = create_event(
-        ...     "Team Meeting",
-        ...     start_date=start,
-        ...     calendar_name="Work",
-        ...     location="Conference Room A",
-        ... )
     """
     if end_date is None:
         end_date = start_date + timedelta(hours=1)
 
-    summary_escaped = escape_applescript_string(summary)
-    cal_escaped = escape_applescript_string(calendar_name)
-
-    # Format dates for AppleScript
-    start_str = start_date.strftime("%m/%d/%Y %H:%M:%S")
-    end_str = end_date.strftime("%m/%d/%Y %H:%M:%S")
-
-    # Build properties
-    props = [
-        f'summary:"{summary_escaped}"',
-        f'start date:date "{start_str}"',
-        f'end date:date "{end_str}"',
-    ]
-
-    if all_day:
-        props.append("allday event:true")
-
-    if location:
-        location_escaped = escape_applescript_string(location)
-        props.append(f'location:"{location_escaped}"')
-
-    if description:
-        desc_escaped = escape_applescript_string(description)
-        props.append(f'description:"{desc_escaped}"')
-
-    props_str = ", ".join(props)
-
-    script = f'''
-    tell application "Calendar"
-        set theCal to calendar "{cal_escaped}"
-        set newEvent to make new event at end of events of theCal with properties {{{props_str}}}
-        return uid of newEvent
-    end tell
-    '''
+    # Format dates for sysm (ISO-ish format works)
+    start_str = start_date.strftime("%Y-%m-%d %H:%M")
+    end_str = end_date.strftime("%Y-%m-%d %H:%M")
 
     try:
-        result = run_applescript(script, timeout=30)
-    except AppleScriptError as e:
-        _check_calendar_running(str(e))
-        raise CalendarAppError(str(e), e.script) from e
+        result = create_event_sysm(
+            title=summary,
+            start=start_str,
+            end=end_str,
+            calendar=calendar_name,
+            location=location or None,
+            notes=description or None,
+            all_day=all_day,
+        )
+    except SysmError as e:
+        raise CalendarAppError(str(e)) from e
 
-    return result.strip()
+    # Extract UID from sysm response
+    return str(result.get("id", result.get("uid", "")))
 
 
 def create_event_from_email(
@@ -124,17 +88,6 @@ def create_event_from_email(
 
     Returns:
         The UID of the created event.
-
-    Example:
-        >>> from datetime import datetime, timedelta
-        >>> start = datetime.now() + timedelta(days=1, hours=14)
-        >>> event_id = create_event_from_email(
-        ...     "Follow up meeting",
-        ...     start_date=start,
-        ...     message_id="abc123@example.com",
-        ...     subject="Project Update",
-        ...     sender="bob@example.com",
-        ... )
     """
     # Build description with email context
     desc_parts = []
@@ -162,6 +115,8 @@ def create_event_from_email(
 def delete_event(event_id: str, calendar_name: str) -> bool:
     """
     Delete a calendar event.
+
+    Uses AppleScript because sysm deletes by title (not UID).
 
     Args:
         event_id: The event UID to delete.

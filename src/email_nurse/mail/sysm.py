@@ -1,12 +1,11 @@
-"""sysm CLI wrapper for faster message retrieval.
+"""sysm CLI wrapper for Mail.app, Calendar, Reminders, and notifications.
 
-This module provides functions to interact with the sysm CLI tool for retrieving
-email messages from Mail.app. Testing shows sysm is 44-51% faster than AppleScript
-for message retrieval operations.
+This module provides functions to interact with the sysm CLI tool, replacing
+AppleScript for all supported operations. sysm has its own TCC grant and is
+not affected by the osascript -1743 automation permission loss.
 
-Performance benchmarks:
-- 10 messages: 1.14s (sysm) vs 2.05s (AppleScript) = 44% faster
-- 50 messages: 5.09s (sysm) vs 10.5s (AppleScript) = 51% faster
+Covers: mail actions/queries, calendar, reminders, notifications.
+AppleScript is still used for gaps noted in each section.
 """
 
 import json
@@ -355,3 +354,510 @@ def load_message_content_sysm(email: "EmailMessage") -> str:
 
     logger.debug(f"Loaded content for message {email.id} via sysm ({len(content)} chars)")
     return content
+
+
+# ---------------------------------------------------------------------------
+# Mail actions
+# ---------------------------------------------------------------------------
+
+
+def move_message_sysm(
+    message_id: str,
+    target_mailbox: str,
+    target_account: str | None = None,
+) -> bool:
+    """Move a message to a different mailbox via sysm.
+
+    Args:
+        message_id: The Mail.app message ID.
+        target_mailbox: Name of the destination mailbox.
+        target_account: Account for the target mailbox (optional).
+
+    Returns:
+        True if the move was successful.
+    """
+    cmd = ["mail", "move", str(message_id), target_mailbox]
+    if target_account:
+        cmd.extend(["--account", target_account])
+    run_sysm(cmd, timeout=30)
+    return True
+
+
+def move_messages_batch_sysm(
+    moves: list,
+) -> tuple[int, set[str]]:
+    """Move multiple messages via sequential sysm calls.
+
+    Args:
+        moves: List of PendingMove objects (from actions.py).
+
+    Returns:
+        Tuple of (total_moved_count, set of successfully moved message IDs).
+    """
+    if not moves:
+        return 0, set()
+
+    total_moved = 0
+    moved_ids: set[str] = set()
+
+    for move in moves:
+        try:
+            # Determine account: use target_account, fall back to source_account
+            account = move.target_account
+            if account == "__local__":
+                account = None
+            elif not account:
+                account = move.source_account
+
+            move_message_sysm(move.message_id, move.target_mailbox, account)
+            total_moved += 1
+            moved_ids.add(move.message_id)
+        except SysmError as e:
+            logger.error(f"sysm move failed for message {move.message_id} -> {move.target_mailbox}: {e}")
+
+    return total_moved, moved_ids
+
+
+def delete_message_sysm(message_id: str) -> bool:
+    """Delete a message via sysm (moves to Trash).
+
+    Args:
+        message_id: The Mail.app message ID.
+
+    Returns:
+        True if the delete was successful.
+    """
+    run_sysm(["mail", "delete", str(message_id), "--force"], timeout=30)
+    return True
+
+
+def mark_as_read_sysm(message_id: str, *, read: bool = True) -> bool:
+    """Mark a message as read or unread via sysm.
+
+    Args:
+        message_id: The Mail.app message ID.
+        read: True to mark as read, False to mark as unread.
+
+    Returns:
+        True if successful.
+    """
+    flag = "--read" if read else "--unread"
+    run_sysm(["mail", "mark", str(message_id), flag], timeout=30)
+    return True
+
+
+def flag_message_sysm(message_id: str, *, flagged: bool = True) -> bool:
+    """Flag or unflag a message via sysm.
+
+    Args:
+        message_id: The Mail.app message ID.
+        flagged: True to flag, False to unflag.
+
+    Returns:
+        True if successful.
+    """
+    flag = "--flag" if flagged else "--unflag"
+    run_sysm(["mail", "flag", str(message_id), flag], timeout=30)
+    return True
+
+
+def reply_to_message_sysm(
+    message_id: str,
+    body: str,
+    *,
+    reply_all: bool = False,
+    send: bool = False,
+) -> bool:
+    """Reply to a message via sysm.
+
+    Args:
+        message_id: The Mail.app message ID.
+        body: Reply body text.
+        reply_all: If True, reply to all recipients.
+        send: If True, send immediately.
+
+    Returns:
+        True if successful.
+    """
+    cmd = ["mail", "reply", str(message_id), "--body", body]
+    if reply_all:
+        cmd.append("--all")
+    if send:
+        cmd.append("--send")
+    run_sysm(cmd, timeout=30)
+    return True
+
+
+def forward_message_sysm(
+    message_id: str,
+    to: str,
+    *,
+    body: str = "",
+    send: bool = False,
+) -> bool:
+    """Forward a message via sysm.
+
+    Args:
+        message_id: The Mail.app message ID.
+        to: Recipient email address.
+        body: Optional body text to include.
+        send: If True, send immediately.
+
+    Returns:
+        True if successful.
+    """
+    cmd = ["mail", "forward", str(message_id), "--to", to]
+    if body:
+        cmd.extend(["--body", body])
+    if send:
+        cmd.append("--send")
+    run_sysm(cmd, timeout=30)
+    return True
+
+
+def compose_email_sysm(
+    to: str,
+    subject: str,
+    body: str,
+    *,
+    account: str | None = None,
+    html_body: str | None = None,
+    send: bool = True,
+) -> bool:
+    """Compose and send an email via sysm.
+
+    Args:
+        to: Recipient email address.
+        subject: Email subject.
+        body: Plain text body.
+        account: Account to send from (optional).
+        html_body: HTML body (optional).
+        send: If True, send immediately (adds --force to skip prompt).
+
+    Returns:
+        True if successful.
+    """
+    cmd = ["mail", "send", "--to", to, "--subject", subject, "--body", body]
+    if html_body:
+        cmd.extend(["--html-body", html_body])
+    if account:
+        cmd.extend(["--account", account])
+    if send:
+        cmd.append("--force")
+    run_sysm(cmd, timeout=30)
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Mail queries
+# ---------------------------------------------------------------------------
+
+
+def get_accounts_sysm() -> list[dict]:
+    """Get all configured email accounts via sysm.
+
+    Returns:
+        List of account dicts with keys from sysm JSON output.
+    """
+    data = run_sysm_json(["mail", "accounts", "--json"], timeout=15)
+    if isinstance(data, dict):
+        data = [data]
+    return data
+
+
+def get_mailboxes_sysm(account: str | None = None) -> list[dict]:
+    """Get mailboxes via sysm.
+
+    Args:
+        account: Filter by account name (optional).
+
+    Returns:
+        List of mailbox dicts from sysm JSON output.
+    """
+    cmd = ["mail", "mailboxes", "--json"]
+    if account:
+        cmd.extend(["--account", account])
+    data = run_sysm_json(cmd, timeout=15)
+    if isinstance(data, dict):
+        data = [data]
+    return data
+
+
+def get_inbox_count_sysm(account: str, mailbox: str = "INBOX") -> int:
+    """Get message count for a mailbox via sysm.
+
+    Fetches the mailbox list and extracts messageCount for the target mailbox.
+
+    Args:
+        account: Account name.
+        mailbox: Mailbox name (default: INBOX).
+
+    Returns:
+        Number of messages, or 0 on error.
+    """
+    try:
+        mailboxes = get_mailboxes_sysm(account)
+        for mbox in mailboxes:
+            if mbox.get("name", "").upper() == mailbox.upper():
+                return int(mbox.get("messageCount", mbox.get("unreadCount", 0)))
+        return 0
+    except (SysmError, ValueError):
+        return 0
+
+
+# ---------------------------------------------------------------------------
+# Calendar
+# ---------------------------------------------------------------------------
+
+
+def get_calendars_sysm() -> list[dict]:
+    """Get all calendars via sysm.
+
+    Returns:
+        List of calendar dicts from sysm JSON output.
+    """
+    data = run_sysm_json(["calendar", "calendars", "--json"], timeout=15)
+    if isinstance(data, dict):
+        data = [data]
+    return data
+
+
+def get_calendar_names_sysm() -> list[str]:
+    """Get just the names of all calendars via sysm.
+
+    Returns:
+        List of calendar names.
+    """
+    calendars = get_calendars_sysm()
+    return [cal.get("name", "") for cal in calendars if cal.get("name")]
+
+
+def create_event_sysm(
+    title: str,
+    start: str,
+    *,
+    end: str | None = None,
+    calendar: str | None = None,
+    location: str | None = None,
+    notes: str | None = None,
+    all_day: bool = False,
+) -> dict:
+    """Create a calendar event via sysm.
+
+    Args:
+        title: Event title.
+        start: Start date/time string (e.g., "2026-02-25 14:00").
+        end: End date/time string (optional, defaults to start + 1hr).
+        calendar: Calendar name (optional).
+        location: Event location (optional).
+        notes: Event notes (optional).
+        all_day: Whether this is an all-day event.
+
+    Returns:
+        Dict with created event details from sysm JSON output.
+    """
+    cmd = ["calendar", "add", title, "--start", start, "--json"]
+    if end:
+        cmd.extend(["--end", end])
+    if calendar:
+        cmd.extend(["--calendar", calendar])
+    if location:
+        cmd.extend(["--location", location])
+    if notes:
+        cmd.extend(["--notes", notes])
+    if all_day:
+        cmd.append("--all-day")
+    data = run_sysm_json(cmd, timeout=30)
+    return data if isinstance(data, dict) else (data[0] if data else {})
+
+
+def get_events_sysm(
+    date: str,
+    *,
+    end_date: str | None = None,
+    calendar: str | None = None,
+) -> list[dict]:
+    """Get calendar events for a date/range via sysm.
+
+    Args:
+        date: Date string (e.g., "2026-02-25", "tomorrow").
+        end_date: End date for range query (optional).
+        calendar: Filter by calendar name (optional).
+
+    Returns:
+        List of event dicts.
+    """
+    cmd = ["calendar", "list", date, "--json"]
+    if end_date:
+        cmd.extend(["--end-date", end_date])
+    if calendar:
+        cmd.extend(["--calendar", calendar])
+    data = run_sysm_json(cmd, timeout=30)
+    if isinstance(data, dict):
+        data = [data]
+    return data
+
+
+def get_events_today_sysm() -> list[dict]:
+    """Get today's calendar events via sysm.
+
+    Returns:
+        List of event dicts.
+    """
+    data = run_sysm_json(["calendar", "today", "--json"], timeout=15)
+    if isinstance(data, dict):
+        data = [data]
+    return data
+
+
+def delete_event_sysm(title: str) -> bool:
+    """Delete a calendar event by title via sysm.
+
+    Note: sysm deletes by title, not UID. This is a different API than
+    the AppleScript version which uses event UID.
+
+    Args:
+        title: Event title to delete.
+
+    Returns:
+        True if successful.
+    """
+    run_sysm(["calendar", "delete", title, "--force"], timeout=30)
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Reminders
+# ---------------------------------------------------------------------------
+
+
+def get_reminder_lists_sysm() -> list[dict]:
+    """Get all reminder lists via sysm.
+
+    Returns:
+        List of reminder list dicts from sysm JSON output.
+    """
+    data = run_sysm_json(["reminders", "lists", "--json"], timeout=30)
+    if isinstance(data, dict):
+        data = [data]
+    return data
+
+
+def get_reminders_sysm(
+    list_name: str | None = None,
+    *,
+    include_completed: bool = False,
+) -> list[dict]:
+    """Get reminders via sysm.
+
+    Args:
+        list_name: Filter to specific list (optional).
+        include_completed: If True, include completed reminders.
+
+    Returns:
+        List of reminder dicts.
+    """
+    cmd = ["reminders", "list"]
+    if list_name:
+        cmd.append(list_name)
+    if include_completed:
+        cmd.append("--all")
+    cmd.append("--json")
+    data = run_sysm_json(cmd, timeout=60)
+    if isinstance(data, dict):
+        data = [data]
+    return data
+
+
+def create_reminder_sysm(
+    task: str,
+    *,
+    list_name: str | None = None,
+    due: str | None = None,
+    notes: str | None = None,
+    priority: int = 0,
+) -> dict:
+    """Create a reminder via sysm.
+
+    Args:
+        task: Reminder text.
+        list_name: Target list name (optional, defaults to "Reminders").
+        due: Due date string (optional).
+        notes: Notes text (optional).
+        priority: Priority (0=none, 1=high, 5=medium, 9=low).
+
+    Returns:
+        Dict with created reminder details from sysm JSON output.
+    """
+    cmd = ["reminders", "add", task]
+    if list_name:
+        cmd.extend(["--list", list_name])
+    if due:
+        cmd.extend(["--due", due])
+    if notes:
+        cmd.extend(["--notes", notes])
+    if priority > 0:
+        cmd.extend(["--priority", str(priority)])
+    cmd.append("--json")
+    data = run_sysm_json(cmd, timeout=60)
+    return data if isinstance(data, dict) else (data[0] if data else {})
+
+
+def complete_reminder_sysm(name: str) -> bool:
+    """Complete a reminder by name via sysm.
+
+    Note: sysm completes by name, not ID. This is a different API than
+    the AppleScript version which uses reminder ID.
+
+    Args:
+        name: Reminder name to complete.
+
+    Returns:
+        True if successful.
+    """
+    run_sysm(["reminders", "complete", name], timeout=30)
+    return True
+
+
+def delete_reminder_sysm(reminder_id: str) -> bool:
+    """Delete a reminder by ID via sysm.
+
+    Args:
+        reminder_id: The reminder ID.
+
+    Returns:
+        True if successful.
+    """
+    run_sysm(["reminders", "delete", reminder_id, "--force"], timeout=30)
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Notifications
+# ---------------------------------------------------------------------------
+
+
+def notify_sysm(
+    title: str,
+    body: str,
+    *,
+    subtitle: str | None = None,
+) -> bool:
+    """Send a macOS notification via sysm.
+
+    Args:
+        title: Notification title.
+        body: Notification body text.
+        subtitle: Optional subtitle.
+
+    Returns:
+        True if successful, False on error.
+    """
+    cmd = ["notify", "send", title, body]
+    if subtitle:
+        cmd.extend(["--subtitle", subtitle])
+    try:
+        run_sysm(cmd, timeout=10)
+        return True
+    except SysmError:
+        return False

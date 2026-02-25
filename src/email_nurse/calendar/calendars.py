@@ -1,16 +1,17 @@
-"""Calendar retrieval from Apple Calendar.app."""
+"""Calendar retrieval from Apple Calendar.app via sysm CLI."""
 
 from dataclasses import dataclass
 
-from email_nurse.applescript import AppleScriptError, AppNotRunningError, run_applescript
+from email_nurse.applescript import AppleScriptError, AppNotRunningError
+from email_nurse.mail.sysm import SysmError, get_calendars_sysm, get_calendar_names_sysm
 
-# ASCII control characters for parsing AppleScript output
+# ASCII control characters for parsing AppleScript output (used by events.py)
 RECORD_SEP = "\x1e"  # ASCII 30 - Record Separator
 UNIT_SEP = "\x1f"  # ASCII 31 - Unit Separator
 
 
 class CalendarAppError(AppleScriptError):
-    """Raised when a Calendar.app AppleScript command fails."""
+    """Raised when a Calendar.app operation fails."""
 
     pass
 
@@ -58,101 +59,45 @@ def _ensure_calendar_running() -> None:
 
 def get_calendars() -> list[Calendar]:
     """
-    Get all calendars from Calendar.app.
+    Get all calendars from Calendar.app via sysm.
 
     Returns:
         List of Calendar objects.
 
     Raises:
-        CalendarAppNotRunningError: If Calendar.app is not running.
-        CalendarAppError: If the AppleScript fails.
+        CalendarAppError: If the operation fails.
     """
-    script = '''
-    tell application "Calendar"
-        set output to ""
-        set RS to (ASCII character 30)  -- Record Separator
-        set US to (ASCII character 31)  -- Unit Separator
-
-        repeat with cal in calendars
-            set calName to name of cal
-            -- Calendar.app doesn't expose uid for calendars - use name as ID
-            set calId to calName
-
-            -- Description may be missing
-            set calDesc to ""
-            try
-                set calDesc to description of cal
-                if calDesc is missing value then set calDesc to ""
-            on error
-                set calDesc to ""
-            end try
-
-            set calWritable to writable of cal
-
-            if output is not "" then set output to output & RS
-            set output to output & calId & US & calName & US & calDesc & US & (calWritable as string)
-        end repeat
-
-        return output
-    end tell
-    '''
-
     try:
-        # Calendar.app is native (not Catalyst) - 30s should be plenty
-        result = run_applescript(script, timeout=30)
-    except AppleScriptError as e:
-        _check_calendar_running(str(e))
-        raise CalendarAppError(str(e), e.script) from e
-
-    if not result:
-        return []
+        data = get_calendars_sysm()
+    except SysmError as e:
+        raise CalendarAppError(str(e)) from e
 
     calendars = []
-    for record in result.split(RECORD_SEP):
-        parts = record.split(UNIT_SEP)
-        if len(parts) >= 4:
-            calendars.append(
-                Calendar(
-                    id=parts[0],
-                    name=parts[1],
-                    description=parts[2],
-                    writable=parts[3].lower() == "true",
-                )
+    for cal in data:
+        name = cal.get("name", "")
+        calendars.append(
+            Calendar(
+                id=cal.get("id", name),
+                name=name,
+                description=cal.get("description", ""),
+                writable=bool(cal.get("writable", True)),
             )
+        )
 
     return calendars
 
 
 def get_calendar_names() -> list[str]:
     """
-    Get just the names of all calendars.
-
-    This is faster than get_calendars() when you only need names.
+    Get just the names of all calendars via sysm.
 
     Returns:
         List of calendar names.
+
+    Raises:
+        CalendarAppError: If the operation fails.
     """
-    script = '''
-    tell application "Calendar"
-        set output to ""
-        set RS to (ASCII character 30)
-
-        repeat with cal in calendars
-            if output is not "" then set output to output & RS
-            set output to output & name of cal
-        end repeat
-
-        return output
-    end tell
-    '''
-
     try:
-        result = run_applescript(script, timeout=30)
-    except AppleScriptError as e:
-        _check_calendar_running(str(e))
-        raise CalendarAppError(str(e), e.script) from e
-
-    if not result:
-        return []
-
-    return result.split(RECORD_SEP)
+        return get_calendar_names_sysm()
+    except SysmError as e:
+        raise CalendarAppError(str(e)) from e

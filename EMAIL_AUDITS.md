@@ -2,6 +2,50 @@
 
 <!-- Run /audit-email to add entries -->
 
+### 2026-02-20 12:00 | 24h | Grade: A
+
+```
+total:214 | rules:86 (40%) | ai:128 (60%)
+delete:2 | move:172 | ignore:40
+folders: Notifications:22 Career:13 CSQR-Support:9 Real-Estate:5 Marketing:4 Config-Diffs:3 Script-Logs:2 Orders:2 Newsletters:2 Healthcare:2 Finance:1
+top-rules: SPFBL-Abuse-Reports:22 Csquare-Support-Tickets:9 LinkedIn-Jobs:8 Redfin:5 CSQUARE-Leadership:5
+```
+
+**Issues:** None
+
+Delete review (2) — both correct:
+- "Next Stock Move" financial scam from try@guess.nextstockmove.com — clickbait health claims, classic spam tactics (autopilot)
+- Brick App spam (rule)
+
+AI routing spot-check (20 moves): All correctly categorized. Marketing: Schwab futures trading promo, Live 360 Seminars x2, Petlibro discount, ESPN weekend programming, Walgreens rewards, Tractor Supply deals, Expo-ETF, Bealls Rewards, Jostens yearbook, Krispy Kreme x2, Hilton Grand Vacations. Newsletters: Hacker Newsletter, Schwab Market Update, TLDR, AINews x2. Notifications: Palo Alto Networks content updates. Finance: Robinhood feature announcement.
+
+Ignores appropriate (40): Work threads correctly left in inbox — CSquare support case CS2139386 (AT&T LOA), Ernie Maestas change management CHG0101096 x2, DX service provider onboarding/Equinix fabric discussion. Financial: medical billing balance due, Apple Card payment confirmation, Principal Financial retirement transfer, W-2 tax document. Personal: YMCA cancellation confirmations x2, Microsoft Family Safety. Calendar: future meeting invites (Feb 26), meeting reminders, golf practice cancellation. Infrastructure: Rancid unattended-upgrades, SPFBL abuse report. Google Voice voicemail left in inbox for user action. Rule-based (20): CSQUARE Leadership x5, Apple Inside x3, Apple News Digest x3, Chase Bank x2, daily.dev x2, USPS x2, UnitedHealthcare, ECU, Gate City UMC.
+
+---
+
+### 2026-02-19 12:00 | 24h | Grade: A
+
+```
+total:163 | rules:69 (42%) | ai:94 (58%)
+delete:2 | move:124 | ignore:36
+folders: GitHub:16 Career:14 Marketing:5 Script-Logs:2 Real-Estate:2 Orders:2 Newsletters:2 Healthcare:2 Config-Diffs:2 NtwkCmdr:1
+top-rules: GitHub:16 LinkedIn-Jobs:10 CSQUARE-Leadership:5 Apple-News-Digest:4 Kickstarter-Marketing:3
+```
+
+**Issues:** None
+
+Delete review (2) — both correct:
+- "Next Stock Move" financial scam using Cyrillic character subject obfuscation (autopilot)
+- SPFBL abuse report automated notification (autopilot)
+
+AI routing spot-check (20 moves): All correctly categorized. Marketing: American Needle, Walgreens rewards, Bespoke Post x2, Jostens yearbook, Apple Card referral, EyeMed, Dollar Shave Club. Newsletters: TLDR, Hackr.io, AINews x3. Orders: Target Drive Up pickup. Finance: Principal Financial transfer, HR 401k contributions x2. Notifications: Disney+ subscriber agreement update. Social: Facebook group notifications x2.
+
+Ignores appropriate (36): Calendar invites for future meetings correctly left in inbox (Feb 20, Feb 26 events). CSquare work threads (AT&T LOAs — Ritchie, Mohammad, Nunez; spares inventory — Nunez; meeting prep — Huntington). SharePoint permission request. Google Payments service announcement x2. Principal Financial security educational content. HR 401k contribution notice. Rancid infrastructure alert. Rule-based (18): CSQUARE Leadership x5, Apple News x4, Chase Bank x3, daily.dev x2, USPS x2, Apple Inside, ECU.
+
+Note: New quick-rules added this session (PMA, UnitedHealthcare, TradingView, City of Kingsport, AEP, State Farm, Electrify America, Verizon → Bills, Console Dev → ignore) not yet reflected — will take effect on next matching emails.
+
+---
+
 ### 2026-02-17 15:30 | 8h | Grade: A
 
 ```

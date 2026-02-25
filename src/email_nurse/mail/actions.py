@@ -1,9 +1,27 @@
-"""Mail.app message actions - move, delete, reply, forward, etc."""
+"""Mail.app message actions - move, delete, reply, forward, etc.
 
+Uses sysm CLI for all supported operations. AppleScript is only used for
+create_mailbox(), create_local_mailbox(), and get_local_mailboxes() (sysm gaps).
+"""
+
+import logging
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 
 from email_nurse.mail.applescript import escape_applescript_string, run_applescript
+from email_nurse.mail.sysm import (
+    compose_email_sysm,
+    delete_message_sysm,
+    flag_message_sysm,
+    forward_message_sysm,
+    get_mailboxes_sysm,
+    mark_as_read_sysm,
+    move_message_sysm,
+    move_messages_batch_sysm,
+    reply_to_message_sysm,
+)
+
+logger = logging.getLogger(__name__)
 
 # ASCII control character for parsing AppleScript output
 # Virtually never found in mailbox names, preventing parse errors
@@ -32,21 +50,8 @@ def get_all_mailboxes(account: str) -> list[str]:
     Returns:
         List of mailbox names.
     """
-    account_escaped = escape_applescript_string(account)
-    script = f'''
-    tell application "Mail"
-        set output to ""
-        set acct to account "{account_escaped}"
-        set RS to (ASCII character 30)  -- Record Separator
-        repeat with mbox in mailboxes of acct
-            if output is not "" then set output to output & RS
-            set output to output & name of mbox
-        end repeat
-        return output
-    end tell
-    '''
-    result = run_applescript(script)
-    return result.split(RECORD_SEP) if result else []
+    mailboxes = get_mailboxes_sysm(account)
+    return [mbox.get("name", "") for mbox in mailboxes if mbox.get("name")]
 
 
 def find_similar_mailbox(target: str, existing: list[str], threshold: float = 0.6) -> str | None:
@@ -79,9 +84,14 @@ def find_similar_mailbox(target: str, existing: list[str], threshold: float = 0.
     return best_match
 
 
+# --- AppleScript-only operations (sysm gaps) ---
+
+
 def create_mailbox(mailbox: str, account: str) -> bool:
     """
     Create a new mailbox in an account.
+
+    Uses AppleScript (sysm has no mailbox creation support).
 
     Args:
         mailbox: Name of the mailbox to create.
@@ -105,6 +115,8 @@ def create_mailbox(mailbox: str, account: str) -> bool:
 def get_local_mailboxes() -> list[str]:
     """
     Get all local 'On My Mac' mailbox names.
+
+    Uses AppleScript (sysm has no local-only mailbox filter).
 
     Returns:
         List of local mailbox names.
@@ -133,6 +145,8 @@ def create_local_mailbox(mailbox: str) -> bool:
     """
     Create a new local 'On My Mac' mailbox.
 
+    Uses AppleScript (sysm has no mailbox creation support).
+
     Args:
         mailbox: Name of the mailbox to create.
 
@@ -149,15 +163,7 @@ def create_local_mailbox(mailbox: str) -> bool:
     return True
 
 
-def _get_message_ref(message_id: str, source_mailbox: str | None, source_account: str | None) -> str:
-    """Build AppleScript to reference a message efficiently."""
-    if source_mailbox and source_account:
-        mailbox_escaped = escape_applescript_string(source_mailbox)
-        account_escaped = escape_applescript_string(source_account)
-        return f'first message of mailbox "{mailbox_escaped}" of account "{account_escaped}" whose id is {message_id}'
-
-    # Fallback: global search (slower)
-    return f'first message whose id is {message_id}'
+# --- sysm-backed operations ---
 
 
 def move_message(
@@ -171,49 +177,27 @@ def move_message(
     """
     Move a message to a different mailbox.
 
-    Note: The mailbox must exist. Use create_mailbox() to create new folders.
-
     Args:
         message_id: The Mail.app message ID.
         target_mailbox: Name of the destination mailbox (must exist).
         target_account: Account for the target mailbox (if different from source).
-        source_mailbox: Original mailbox (for faster lookup).
-        source_account: Original account (for faster lookup).
+        source_mailbox: Original mailbox (unused, kept for signature compat).
+        source_account: Original account (used as fallback for target_account).
 
     Returns:
         True if the move was successful.
     """
-    mailbox_escaped = escape_applescript_string(target_mailbox)
-    msg_ref = _get_message_ref(message_id, source_mailbox, source_account)
-
-    # Determine which account to use for the target mailbox
-    # LOCAL_ACCOUNT_KEY ("__local__") means route to local "On My Mac" mailboxes
+    # Determine account: LOCAL_ACCOUNT_KEY means no account
     if target_account == LOCAL_ACCOUNT_KEY:
-        account_escaped = None  # Local folder - no account qualifier
+        account = None
     elif target_account:
-        account_escaped = escape_applescript_string(target_account)
+        account = target_account
     elif source_account:
-        account_escaped = escape_applescript_string(source_account)
+        account = source_account
     else:
-        account_escaped = None
+        account = None
 
-    if account_escaped:
-        script = f'''
-        tell application "Mail"
-            set msg to {msg_ref}
-            move msg to mailbox "{mailbox_escaped}" of account "{account_escaped}"
-        end tell
-        '''
-    else:
-        script = f'''
-        tell application "Mail"
-            set msg to {msg_ref}
-            move msg to mailbox "{mailbox_escaped}"
-        end tell
-        '''
-
-    run_applescript(script)
-    return True
+    return move_message_sysm(message_id, target_mailbox, account)
 
 
 @dataclass
@@ -229,152 +213,15 @@ class PendingMove:
 
 def move_messages_batch(moves: list[PendingMove]) -> tuple[int, set[str]]:
     """
-    Move multiple messages in batched AppleScript calls.
-
-    Groups messages by (target_mailbox, target_account) and executes one
-    AppleScript call per group. This is much faster than individual moves.
+    Move multiple messages via sysm.
 
     Args:
         moves: List of PendingMove objects.
 
     Returns:
         Tuple of (total_moved_count, set of successfully moved message IDs).
-        Message IDs are only included when the entire group succeeds.
     """
-    if not moves:
-        return 0, set()
-
-    # Group moves by target (mailbox, account) for batch processing
-    from collections import defaultdict
-
-    groups: dict[tuple[str, str | None], list[PendingMove]] = defaultdict(list)
-    for move in moves:
-        key = (move.target_mailbox, move.target_account)
-        groups[key].append(move)
-
-    total_moved = 0
-    moved_ids: set[str] = set()
-
-    for (target_mailbox, target_account), group_moves in groups.items():
-        group_msg_ids = {m.message_id for m in group_moves}
-        mailbox_escaped = escape_applescript_string(target_mailbox)
-
-        # Build message references - group by source mailbox/account for efficiency
-        # Messages from same source can be referenced more efficiently
-        source_groups: dict[tuple[str | None, str | None], list[str]] = defaultdict(list)
-        for m in group_moves:
-            source_key = (m.source_mailbox, m.source_account)
-            source_groups[source_key].append(m.message_id)
-
-        # Determine target account for AppleScript
-        if target_account == LOCAL_ACCOUNT_KEY:
-            account_escaped = None
-        elif target_account:
-            account_escaped = escape_applescript_string(target_account)
-        else:
-            # Use first source account as fallback
-            first_move = group_moves[0]
-            if first_move.source_account:
-                account_escaped = escape_applescript_string(first_move.source_account)
-            else:
-                account_escaped = None
-
-        # Build AppleScript for this batch
-        if account_escaped:
-            target_ref = f'mailbox "{mailbox_escaped}" of account "{account_escaped}"'
-        else:
-            target_ref = f'mailbox "{mailbox_escaped}"'
-
-        # Build message list and move in one script
-        msg_id_list = [m.message_id for m in group_moves]
-        msg_ids_str = "{" + ", ".join(msg_id_list) + "}"
-
-        # For same-source batches, use optimized lookup
-        # For mixed sources, use global lookup (slower but works)
-        if len(source_groups) == 1:
-            (src_mailbox, src_account) = list(source_groups.keys())[0]
-            if src_mailbox and src_account:
-                src_mailbox_escaped = escape_applescript_string(src_mailbox)
-                src_account_escaped = escape_applescript_string(src_account)
-                script = f'''
-                tell application "Mail"
-                    set targetBox to {target_ref}
-                    set srcBox to mailbox "{src_mailbox_escaped}" of account "{src_account_escaped}"
-                    set msgIds to {msg_ids_str}
-                    set movedCount to 0
-                    -- Get all valid message IDs in source mailbox first
-                    set validIds to id of every message of srcBox
-                    repeat with msgId in msgIds
-                        try
-                            if validIds contains msgId then
-                                set msg to first message of srcBox whose id is msgId
-                                move msg to targetBox
-                                set movedCount to movedCount + 1
-                            end if
-                        end try
-                    end repeat
-                    return movedCount
-                end tell
-                '''
-            else:
-                # Global lookup fallback - skip validation (expensive for global search)
-                script = f'''
-                tell application "Mail"
-                    set targetBox to {target_ref}
-                    set msgIds to {msg_ids_str}
-                    set movedCount to 0
-                    repeat with msgId in msgIds
-                        try
-                            set msg to first message whose id is msgId
-                            move msg to targetBox
-                            set movedCount to movedCount + 1
-                        on error
-                            -- Message not found, skip silently
-                        end try
-                    end repeat
-                    return movedCount
-                end tell
-                '''
-        else:
-            # Mixed sources - use global lookup, skip validation (expensive)
-            script = f'''
-            tell application "Mail"
-                set targetBox to {target_ref}
-                set msgIds to {msg_ids_str}
-                set movedCount to 0
-                repeat with msgId in msgIds
-                    try
-                        set msg to first message whose id is msgId
-                        move msg to targetBox
-                        set movedCount to movedCount + 1
-                    on error
-                        -- Message not found, skip silently
-                    end try
-                end repeat
-                return movedCount
-            end tell
-            '''
-
-        try:
-            result = run_applescript(script, timeout=120)
-            if result:
-                count = int(result)
-                total_moved += count
-                if count == len(group_moves):
-                    moved_ids.update(group_msg_ids)
-                # If partial (count < len), we can't tell which moved,
-                # so conservatively don't add to moved_ids
-            else:
-                total_moved += len(group_moves)  # Assume success if no error
-                moved_ids.update(group_msg_ids)
-        except Exception as e:
-            # Log the error but continue with other groups
-            import logging
-            logging.getLogger("email_nurse").error(
-                f"Batch move failed for {target_mailbox} ({target_account}): {e}"
-            )
-
-    return total_moved, moved_ids
+    return move_messages_batch_sysm(moves)
 
 
 def delete_message(
@@ -385,54 +232,18 @@ def delete_message(
     source_account: str | None = None,
 ) -> bool:
     """
-    Delete a message (move to Trash or permanently delete).
+    Delete a message (move to Trash).
 
     Args:
         message_id: The Mail.app message ID.
-        permanent: If True, permanently delete. Otherwise move to Trash.
-        source_mailbox: Original mailbox (for faster lookup).
-        source_account: Original account (for faster lookup).
+        permanent: Unused (sysm always moves to Trash).
+        source_mailbox: Unused, kept for signature compat.
+        source_account: Unused, kept for signature compat.
 
     Returns:
         True if the delete was successful.
     """
-    msg_ref = _get_message_ref(message_id, source_mailbox, source_account)
-
-    if permanent:
-        script = f'''
-        tell application "Mail"
-            set msg to {msg_ref}
-            delete msg
-        end tell
-        '''
-    else:
-        # Find trash by common names since "trash mailbox of account" doesn't work
-        script = f'''
-        tell application "Mail"
-            set msg to {msg_ref}
-            set msgAcct to account of mailbox of msg
-
-            -- Search for trash mailbox by common names
-            set trashNames to {{"Trash", "Deleted Messages", "[Gmail]/Trash", "Deleted Items"}}
-            set trashMbox to missing value
-
-            repeat with trashName in trashNames
-                try
-                    set trashMbox to mailbox trashName of msgAcct
-                    exit repeat
-                end try
-            end repeat
-
-            if trashMbox is missing value then
-                error "Could not find trash mailbox"
-            end if
-
-            move msg to trashMbox
-        end tell
-        '''
-
-    run_applescript(script)
-    return True
+    return delete_message_sysm(message_id)
 
 
 def mark_as_read(
@@ -448,23 +259,13 @@ def mark_as_read(
     Args:
         message_id: The Mail.app message ID.
         read: True to mark as read, False to mark as unread.
-        source_mailbox: Original mailbox (for faster lookup).
-        source_account: Original account (for faster lookup).
+        source_mailbox: Unused, kept for signature compat.
+        source_account: Unused, kept for signature compat.
 
     Returns:
         True if successful.
     """
-    msg_ref = _get_message_ref(message_id, source_mailbox, source_account)
-    read_value = "true" if read else "false"
-    script = f'''
-    tell application "Mail"
-        set msg to {msg_ref}
-        set read status of msg to {read_value}
-    end tell
-    '''
-
-    run_applescript(script)
-    return True
+    return mark_as_read_sysm(message_id, read=read)
 
 
 def flag_message(
@@ -480,23 +281,13 @@ def flag_message(
     Args:
         message_id: The Mail.app message ID.
         flagged: True to flag, False to unflag.
-        source_mailbox: Original mailbox (for faster lookup).
-        source_account: Original account (for faster lookup).
+        source_mailbox: Unused, kept for signature compat.
+        source_account: Unused, kept for signature compat.
 
     Returns:
         True if successful.
     """
-    msg_ref = _get_message_ref(message_id, source_mailbox, source_account)
-    flag_value = "true" if flagged else "false"
-    script = f'''
-    tell application "Mail"
-        set msg to {msg_ref}
-        set flagged status of msg to {flag_value}
-    end tell
-    '''
-
-    run_applescript(script)
-    return True
+    return flag_message_sysm(message_id, flagged=flagged)
 
 
 def reply_to_message(
@@ -516,37 +307,15 @@ def reply_to_message(
         reply_content: The body text of the reply.
         reply_all: If True, reply to all recipients.
         send_immediately: If True, send the reply immediately.
-        source_mailbox: Original mailbox (for faster lookup).
-        source_account: Original account (for faster lookup).
+        source_mailbox: Unused, kept for signature compat.
+        source_account: Unused, kept for signature compat.
 
     Returns:
         True if the reply was created/sent successfully.
     """
-    msg_ref = _get_message_ref(message_id, source_mailbox, source_account)
-    content_escaped = escape_applescript_string(reply_content)
-    reply_cmd = "reply" if not reply_all else "reply msg with properties {reply to all:true}"
-
-    if send_immediately:
-        script = f'''
-        tell application "Mail"
-            set msg to {msg_ref}
-            set replyMsg to {reply_cmd} msg
-            set content of replyMsg to "{content_escaped}"
-            send replyMsg
-        end tell
-        '''
-    else:
-        script = f'''
-        tell application "Mail"
-            set msg to {msg_ref}
-            set replyMsg to {reply_cmd} msg
-            set content of replyMsg to "{content_escaped}"
-            -- Leave draft open for review
-        end tell
-        '''
-
-    run_applescript(script)
-    return True
+    return reply_to_message_sysm(
+        message_id, reply_content, reply_all=reply_all, send=send_immediately
+    )
 
 
 def forward_message(
@@ -561,44 +330,30 @@ def forward_message(
     """
     Forward a message to one or more recipients.
 
+    Note: sysm only supports a single --to address. For multiple recipients,
+    we forward to the first address only.
+
     Args:
         message_id: The Mail.app message ID.
         to_addresses: List of email addresses to forward to.
         additional_content: Optional text to prepend to the forwarded message.
         send_immediately: If True, send immediately.
-        source_mailbox: Original mailbox (for faster lookup).
-        source_account: Original account (for faster lookup).
+        source_mailbox: Unused, kept for signature compat.
+        source_account: Unused, kept for signature compat.
 
     Returns:
         True if successful.
     """
-    msg_ref = _get_message_ref(message_id, source_mailbox, source_account)
-    content_escaped = escape_applescript_string(additional_content)
-    addresses_str = ", ".join(f'"{addr}"' for addr in to_addresses)
+    if not to_addresses:
+        return False
 
-    send_action = "send fwdMsg" if send_immediately else "-- Draft created"
-
-    script = f'''
-    tell application "Mail"
-        set msg to {msg_ref}
-        set fwdMsg to forward msg
-
-        -- Add recipients
-        repeat with addr in {{{addresses_str}}}
-            make new to recipient at end of to recipients of fwdMsg with properties {{address:addr}}
-        end repeat
-
-        -- Prepend additional content if provided
-        if "{content_escaped}" is not "" then
-            set content of fwdMsg to "{content_escaped}" & return & return & content of fwdMsg
-        end if
-
-        {send_action}
-    end tell
-    '''
-
-    run_applescript(script)
-    return True
+    # sysm forward only supports single --to; forward to first address
+    return forward_message_sysm(
+        message_id,
+        to_addresses[0],
+        body=additional_content,
+        send=send_immediately,
+    )
 
 
 def get_mailboxes(account_name: str | None = None) -> list[str]:
@@ -611,38 +366,18 @@ def get_mailboxes(account_name: str | None = None) -> list[str]:
     Returns:
         List of mailbox names.
     """
+    mailboxes = get_mailboxes_sysm(account_name)
     if account_name:
-        account_escaped = escape_applescript_string(account_name)
-        script = f'''
-        tell application "Mail"
-            set output to ""
-            set RS to (ASCII character 30)  -- Record Separator
-            set mboxes to mailboxes of account "{account_escaped}"
-            repeat with mbox in mboxes
-                if output is not "" then set output to output & RS
-                set output to output & name of mbox
-            end repeat
-            return output
-        end tell
-        '''
+        return [mbox.get("name", "") for mbox in mailboxes if mbox.get("name")]
     else:
-        script = '''
-        tell application "Mail"
-            set output to ""
-            set RS to (ASCII character 30)  -- Record Separator
-            repeat with acct in accounts
-                set mboxes to mailboxes of acct
-                repeat with mbox in mboxes
-                    if output is not "" then set output to output & RS
-                    set output to output & name of mbox & " (" & name of acct & ")"
-                end repeat
-            end repeat
-            return output
-        end tell
-        '''
-
-    result = run_applescript(script)
-    return result.split(RECORD_SEP) if result else []
+        # When no account specified, include account context like the old format
+        result = []
+        for mbox in mailboxes:
+            name = mbox.get("name", "")
+            acct = mbox.get("account", mbox.get("accountName", ""))
+            if name:
+                result.append(f"{name} ({acct})" if acct else name)
+        return result
 
 
 def compose_email(
@@ -655,71 +390,26 @@ def compose_email(
     send_immediately: bool = True,
 ) -> bool:
     """
-    Compose and optionally send a new email via Mail.app.
+    Compose and optionally send a new email via sysm.
 
     Args:
         to_address: Recipient email address.
         subject: Email subject line.
         content: Plain text email body (newlines preserved).
         from_account: Account to send from (uses first enabled if not specified).
-        sender_address: Specific sender email address (must match account).
+        sender_address: Specific sender email address (unused by sysm).
         send_immediately: If True, send immediately; if False, leave as draft.
 
     Returns:
         True if successful, False otherwise.
     """
-    import tempfile
-
-    # Import here to avoid circular import
-    from email_nurse.mail.accounts import get_accounts
-
-    subject_escaped = escape_applescript_string(subject)
-    to_escaped = escape_applescript_string(to_address)
-
-    # Use first enabled account if not specified
-    if from_account is None:
-        accounts = get_accounts()
-        enabled = [a for a in accounts if a.enabled]
-        if not enabled:
-            raise ValueError("No enabled email accounts found")
-        from_account = enabled[0].name
-
-    send_cmd = "send newMsg" if send_immediately else ""
-
-    # Get sender address - use specific address if provided, otherwise first from account
-    account_escaped = escape_applescript_string(from_account)
-    sender_escaped = escape_applescript_string(sender_address) if sender_address else None
-
-    # Write content to temp file to avoid AppleScript escaping issues
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
-        f.write(content)
-        temp_path = f.name
-
-    try:
-        # Build message properties - sender is optional
-        # If sender_address is specified, include it; otherwise let Mail use default
-        if sender_escaped:
-            msg_props = f'{{subject:"{subject_escaped}", content:msgContent, visible:false, sender:"{sender_escaped}"}}'
-        else:
-            msg_props = f'{{subject:"{subject_escaped}", content:msgContent, visible:false}}'
-
-        script = f'''
-        set filePath to POSIX file "{temp_path}"
-        set msgContent to read filePath as text
-        tell application "Mail"
-            set newMsg to make new outgoing message with properties {msg_props}
-            tell newMsg
-                make new to recipient at end of to recipients with properties {{address:"{to_escaped}"}}
-            end tell
-            {send_cmd}
-        end tell
-        '''
-        run_applescript(script, timeout=30)
-        return True
-    finally:
-        # Clean up temp file
-        import os
-        os.unlink(temp_path)
+    return compose_email_sysm(
+        to_address,
+        subject,
+        content,
+        account=from_account,
+        send=send_immediately,
+    )
 
 
 def send_email_smtp(

@@ -1,17 +1,14 @@
 """Write operations for Apple Reminders.app.
 
-This module provides functions to create, complete, and delete reminders
-via AppleScript integration with macOS Reminders.app.
-
-Performance Note:
-    Reminders.app is a Catalyst app (iPad app running on macOS), which makes
-    AppleScript interactions slower than native apps. Write operations
-    typically complete in 1-5 seconds.
+Uses sysm CLI for create and delete operations. AppleScript is kept for
+complete_reminder() and uncomplete_reminder() because sysm completes by
+name (not ID), which is a different API.
 """
 
 from datetime import datetime
 
 from email_nurse.applescript import AppleScriptError, escape_applescript_string, run_applescript
+from email_nurse.mail.sysm import SysmError, create_reminder_sysm, delete_reminder_sysm
 from email_nurse.reminders.lists import RemindersAppError, _check_reminders_running
 
 
@@ -23,7 +20,7 @@ def create_reminder(
     priority: int = 0,
 ) -> str:
     """
-    Create a new reminder in Reminders.app.
+    Create a new reminder in Reminders.app via sysm.
 
     Args:
         name: The reminder title.
@@ -36,52 +33,24 @@ def create_reminder(
         The ID of the newly created reminder.
 
     Raises:
-        RemindersAppNotRunningError: If Reminders.app is not running.
-        RemindersAppError: If the AppleScript fails.
-
-    Example:
-        >>> reminder_id = create_reminder(
-        ...     "Call Bob",
-        ...     list_name="Work",
-        ...     due_date=datetime(2025, 1, 15, 9, 0),
-        ...     priority=1,  # high
-        ... )
+        RemindersAppError: If the operation fails.
     """
-    name_escaped = escape_applescript_string(name)
-    list_escaped = escape_applescript_string(list_name)
-
-    # Build properties dictionary
-    props = [f'name:"{name_escaped}"']
-
-    if body:
-        body_escaped = escape_applescript_string(body)
-        props.append(f'body:"{body_escaped}"')
-
-    if priority > 0:
-        props.append(f"priority:{priority}")
-
+    due_str = None
     if due_date:
-        # AppleScript date format: "month/day/year hour:minute:second"
-        due_str = due_date.strftime("%m/%d/%Y %H:%M:%S")
-        props.append(f'due date:date "{due_str}"')
-
-    props_str = ", ".join(props)
-
-    script = f'''
-    tell application "Reminders"
-        set newReminder to make new reminder with properties {{{props_str}}} at list "{list_escaped}"
-        return id of newReminder
-    end tell
-    '''
+        due_str = due_date.strftime("%Y-%m-%d %H:%M")
 
     try:
-        # Reminders.app (Catalyst) is slow - use 60s timeout
-        result = run_applescript(script, timeout=60)
-    except AppleScriptError as e:
-        _check_reminders_running(str(e))
-        raise RemindersAppError(str(e), e.script) from e
+        result = create_reminder_sysm(
+            task=name,
+            list_name=list_name,
+            due=due_str,
+            notes=body or None,
+            priority=priority,
+        )
+    except SysmError as e:
+        raise RemindersAppError(str(e)) from e
 
-    return result.strip()
+    return str(result.get("id", ""))
 
 
 def create_reminder_from_email(
@@ -108,19 +77,6 @@ def create_reminder_from_email(
 
     Returns:
         The ID of the newly created reminder.
-
-    Raises:
-        RemindersAppNotRunningError: If Reminders.app is not running.
-        RemindersAppError: If the AppleScript fails.
-
-    Example:
-        >>> reminder_id = create_reminder_from_email(
-        ...     message_id="12345",
-        ...     name="Reply to Bob's email",
-        ...     list_name="Work",
-        ...     subject="Q4 Budget Review",
-        ...     sender="bob@example.com",
-        ... )
     """
     # Build body with message link
     body_parts = [f"From email: message://<{message_id}>"]
@@ -140,9 +96,14 @@ def create_reminder_from_email(
     )
 
 
+# --- AppleScript-only operations (sysm gaps) ---
+
+
 def complete_reminder(reminder_id: str, list_name: str) -> bool:
     """
     Mark a reminder as completed.
+
+    Uses AppleScript because sysm completes by name (not ID).
 
     Args:
         reminder_id: The unique ID of the reminder.
@@ -153,11 +114,7 @@ def complete_reminder(reminder_id: str, list_name: str) -> bool:
 
     Raises:
         RemindersAppNotRunningError: If Reminders.app is not running.
-        RemindersAppError: If the AppleScript fails (e.g., reminder not found).
-
-    Example:
-        >>> complete_reminder("x-apple-reminder://ABC123", "Work")
-        True
+        RemindersAppError: If the AppleScript fails.
     """
     list_escaped = escape_applescript_string(list_name)
     id_escaped = escape_applescript_string(reminder_id)
@@ -171,7 +128,6 @@ def complete_reminder(reminder_id: str, list_name: str) -> bool:
     '''
 
     try:
-        # Reminders.app (Catalyst) is slow - use 60s timeout
         run_applescript(script, timeout=60)
     except AppleScriptError as e:
         _check_reminders_running(str(e))
@@ -183,6 +139,8 @@ def complete_reminder(reminder_id: str, list_name: str) -> bool:
 def uncomplete_reminder(reminder_id: str, list_name: str) -> bool:
     """
     Mark a completed reminder as incomplete.
+
+    Uses AppleScript (sysm has no uncomplete equivalent).
 
     Args:
         reminder_id: The unique ID of the reminder.
@@ -217,41 +175,19 @@ def uncomplete_reminder(reminder_id: str, list_name: str) -> bool:
 
 def delete_reminder(reminder_id: str, list_name: str) -> bool:
     """
-    Delete a reminder from Reminders.app.
-
-    Warning:
-        This permanently deletes the reminder. It cannot be undone.
+    Delete a reminder from Reminders.app via sysm.
 
     Args:
         reminder_id: The unique ID of the reminder.
-        list_name: The name of the list containing the reminder.
+        list_name: The name of the list containing the reminder (unused by sysm).
 
     Returns:
         True if successful.
 
     Raises:
-        RemindersAppNotRunningError: If Reminders.app is not running.
-        RemindersAppError: If the AppleScript fails (e.g., reminder not found).
-
-    Example:
-        >>> delete_reminder("x-apple-reminder://ABC123", "Work")
-        True
+        RemindersAppError: If the operation fails.
     """
-    list_escaped = escape_applescript_string(list_name)
-    id_escaped = escape_applescript_string(reminder_id)
-
-    script = f'''
-    tell application "Reminders"
-        set targetList to list "{list_escaped}"
-        set targetReminder to first reminder of targetList whose id is "{id_escaped}"
-        delete targetReminder
-    end tell
-    '''
-
     try:
-        run_applescript(script, timeout=60)
-    except AppleScriptError as e:
-        _check_reminders_running(str(e))
-        raise RemindersAppError(str(e), e.script) from e
-
-    return True
+        return delete_reminder_sysm(reminder_id)
+    except SysmError as e:
+        raise RemindersAppError(str(e)) from e
