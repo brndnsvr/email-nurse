@@ -1,12 +1,23 @@
-"""Mail.app message retrieval and parsing."""
+"""Mail.app message retrieval and parsing.
+
+Uses sysm CLI as the sole provider for message retrieval.
+AppleScript is only used for load_message_headers() (sysm gap).
+"""
 
 import logging
 import sys
+import time
 from dataclasses import dataclass
 from datetime import datetime
 
 from email_nurse.config import Settings
 from email_nurse.mail.applescript import escape_applescript_string, run_applescript
+from email_nurse.mail.sysm import (
+    get_inbox_count_sysm,
+    get_messages_metadata_sysm,
+    get_messages_sysm,
+    load_message_content_sysm,
+)
 from email_nurse.performance_tracker import get_tracker
 
 logger = logging.getLogger(__name__)
@@ -50,9 +61,7 @@ def get_messages(
     unread_only: bool = False,
 ) -> list[EmailMessage]:
     """
-    Retrieve messages from a mailbox - provider agnostic.
-
-    Uses configured message provider (applescript/sysm/hybrid).
+    Retrieve messages from a mailbox with content via sysm.
 
     Args:
         mailbox: Name of the mailbox (default: INBOX).
@@ -63,112 +72,12 @@ def get_messages(
     Returns:
         List of EmailMessage objects.
     """
-    # Get settings
     settings = Settings()
     provider = settings.message_provider
+    if provider not in ("sysm", "hybrid"):
+        logger.info("message_provider=%s is deprecated, using sysm", provider)
 
-    # Provider selection
-    if provider == "sysm":
-        from email_nurse.mail.sysm import get_messages_sysm
-        return get_messages_sysm(mailbox, account, limit, unread_only)
-
-    elif provider == "hybrid":
-        # Try sysm first with fast timeout, fallback to AppleScript
-        try:
-            from email_nurse.mail.sysm import get_messages_sysm
-            logger.info("Trying sysm for message retrieval with content")
-            return get_messages_sysm(mailbox, account, limit, unread_only)
-        except Exception as e:
-            logger.warning(f"sysm failed ({e}), falling back to AppleScript")
-            # Fall through to AppleScript below
-
-    # Default: AppleScript (existing implementation continues below)
-    mailbox_escaped = escape_applescript_string(mailbox)
-
-    if account:
-        account_escaped = escape_applescript_string(account)
-        mailbox_ref = f'mailbox "{mailbox_escaped}" of account "{account_escaped}"'
-    else:
-        mailbox_ref = f'mailbox "{mailbox_escaped}"'
-
-    read_filter = "whose read status is false" if unread_only else ""
-
-    # Use lazy iteration with early exit to avoid timeout on large mailboxes.
-    # The previous approach (set msgList to all messages, then limit) timed out
-    # because AppleScript enumerated all messages upfront. This approach iterates
-    # lazily and exits after 'limit' messages are processed.
-    script = f'''
-    tell application "Mail"
-        set output to ""
-        set RS to (ASCII character 30)  -- Record Separator
-        set US to (ASCII character 31)  -- Unit Separator
-        set i to 0
-
-        repeat with msg in (messages of {mailbox_ref} {read_filter})
-            -- Early exit after limit reached (avoids full enumeration)
-            set i to i + 1
-            if i > {limit} then exit repeat
-
-            set msgId to id of msg as string
-            set msgMessageId to message id of msg
-            set msgSubject to subject of msg
-            set msgSender to sender of msg
-            set msgDateReceived to date received of msg as string
-            set msgDateSent to date sent of msg as string
-            set msgRead to read status of msg
-            set msgMailbox to name of mailbox of msg
-            set msgAccount to name of account of mailbox of msg
-
-            -- Get recipients
-            set recipList to ""
-            repeat with recip in recipients of msg
-                if recipList is not "" then set recipList to recipList & ","
-                set recipList to recipList & (address of recip)
-            end repeat
-
-            -- Get content (first 5000 chars to avoid huge payloads)
-            set msgContent to ""
-            try
-                set msgContent to content of msg
-                if length of msgContent > 5000 then
-                    set msgContent to text 1 thru 5000 of msgContent
-                end if
-            end try
-
-            -- Build record with ASCII control chars as delimiters
-            if output is not "" then set output to output & RS
-            set output to output & msgId & US & msgMessageId & US & msgSubject & US & msgSender & US & recipList & US & msgDateReceived & US & msgDateSent & US & msgContent & US & msgRead & US & msgMailbox & US & msgAccount
-        end repeat
-
-        return output
-    end tell
-    '''
-
-    result = run_applescript(script, timeout=600)  # 10 min timeout for large mailboxes
-    if not result:
-        return []
-
-    messages = []
-    for msg_str in result.split(RECORD_SEP):
-        parts = msg_str.split(UNIT_SEP)
-        if len(parts) >= 11:
-            messages.append(
-                EmailMessage(
-                    id=parts[0],
-                    message_id=parts[1],
-                    subject=parts[2],
-                    sender=parts[3],
-                    recipients=parts[4].split(",") if parts[4] else [],
-                    date_received=_parse_date(parts[5]),
-                    date_sent=_parse_date(parts[6]),
-                    content=parts[7],
-                    is_read=parts[8].lower() == "true",
-                    mailbox=parts[9],
-                    account=parts[10],
-                )
-            )
-
-    return messages
+    return get_messages_sysm(mailbox, account, limit, unread_only)
 
 
 def get_messages_metadata(
@@ -178,13 +87,10 @@ def get_messages_metadata(
     unread_only: bool = False,
 ) -> list[EmailMessage]:
     """
-    Retrieve messages from a mailbox WITHOUT content (metadata only) - provider agnostic.
-
-    Uses configured message provider (applescript/sysm/hybrid).
+    Retrieve messages from a mailbox WITHOUT content (metadata only) via sysm.
 
     This is significantly faster than get_messages() because fetching
-    message content is the primary bottleneck in AppleScript/Mail.app
-    communication.
+    message content is the primary bottleneck.
 
     Args:
         mailbox: Name of the mailbox (default: INBOX).
@@ -196,51 +102,25 @@ def get_messages_metadata(
         List of EmailMessage objects with content_loaded=False.
         Call load_message_content() to fetch content when needed.
     """
-    # Get settings and performance tracker
     settings = Settings()
     provider = settings.message_provider
-    tracker = get_tracker()
+    if provider not in ("sysm", "hybrid"):
+        logger.info("message_provider=%s is deprecated, using sysm", provider)
 
-    # Track the fetch operation
-    import time
+    tracker = get_tracker()
     start_time = time.time()
-    provider_used = provider
-    messages = []
+    messages: list[EmailMessage] = []
 
     try:
-        # Provider selection
-        if provider == "sysm":
-            from email_nurse.mail.sysm import get_messages_metadata_sysm
-            messages = get_messages_metadata_sysm(mailbox, account, limit, unread_only)
-            provider_used = "sysm"
-
-        elif provider == "hybrid":
-            # Try sysm first with fast timeout, fallback to AppleScript
-            try:
-                from email_nurse.mail.sysm import get_messages_metadata_sysm
-                logger.info("Trying sysm for message metadata retrieval")
-                messages = get_messages_metadata_sysm(mailbox, account, limit, unread_only)
-                provider_used = "sysm"
-            except Exception as e:
-                logger.warning(f"sysm failed ({e}), falling back to AppleScript")
-                provider_used = "applescript"
-                # Fall through to AppleScript below
-                messages = _get_messages_metadata_applescript(mailbox, account, limit, unread_only)
-        else:
-            # Default: AppleScript
-            provider_used = "applescript"
-            messages = _get_messages_metadata_applescript(mailbox, account, limit, unread_only)
-
+        messages = get_messages_metadata_sysm(mailbox, account, limit, unread_only)
         return messages
     finally:
-        # Log performance metric
         duration = time.time() - start_time
         from email_nurse.performance_tracker import OperationMetric
-        from datetime import datetime
         tracker.log_metric(OperationMetric(
             timestamp=datetime.now().isoformat(),
             operation="fetch_messages",
-            provider=provider_used,
+            provider="sysm",
             duration_seconds=round(duration, 3),
             message_count=len(messages),
             account=account or "all",
@@ -250,97 +130,11 @@ def get_messages_metadata(
         ))
 
 
-def _get_messages_metadata_applescript(
-    mailbox: str,
-    account: str | None,
-    limit: int,
-    unread_only: bool,
-) -> list[EmailMessage]:
-    """AppleScript implementation of get_messages_metadata."""
-    mailbox_escaped = escape_applescript_string(mailbox)
-
-    if account:
-        account_escaped = escape_applescript_string(account)
-        mailbox_ref = f'mailbox "{mailbox_escaped}" of account "{account_escaped}"'
-    else:
-        mailbox_ref = f'mailbox "{mailbox_escaped}"'
-
-    read_filter = "whose read status is false" if unread_only else ""
-
-    # Metadata-only fetch - NO content extraction
-    script = f'''
-    tell application "Mail"
-        set output to ""
-        set RS to (ASCII character 30)  -- Record Separator
-        set US to (ASCII character 31)  -- Unit Separator
-        set i to 0
-
-        repeat with msg in (messages of {mailbox_ref} {read_filter})
-            -- Early exit after limit reached
-            set i to i + 1
-            if i > {limit} then exit repeat
-
-            set msgId to id of msg as string
-            set msgMessageId to message id of msg
-            set msgSubject to subject of msg
-            set msgSender to sender of msg
-            set msgDateReceived to date received of msg as string
-            set msgDateSent to date sent of msg as string
-            set msgRead to read status of msg
-            set msgMailbox to name of mailbox of msg
-            set msgAccount to name of account of mailbox of msg
-
-            -- Get recipients
-            set recipList to ""
-            repeat with recip in recipients of msg
-                if recipList is not "" then set recipList to recipList & ","
-                set recipList to recipList & (address of recip)
-            end repeat
-
-            -- NO content extraction - this is the key performance optimization
-
-            -- Build record with ASCII control chars as delimiters
-            if output is not "" then set output to output & RS
-            set output to output & msgId & US & msgMessageId & US & msgSubject & US & msgSender & US & recipList & US & msgDateReceived & US & msgDateSent & US & msgRead & US & msgMailbox & US & msgAccount
-        end repeat
-
-        return output
-    end tell
-    '''
-
-    result = run_applescript(script, timeout=300)  # Increased for large inboxes (1000+ emails)
-    if not result:
-        return []
-
-    messages = []
-    for msg_str in result.split(RECORD_SEP):
-        parts = msg_str.split(UNIT_SEP)
-        if len(parts) >= 10:
-            messages.append(
-                EmailMessage(
-                    id=parts[0],
-                    message_id=parts[1],
-                    subject=parts[2],
-                    sender=parts[3],
-                    recipients=parts[4].split(",") if parts[4] else [],
-                    date_received=_parse_date(parts[5]),
-                    date_sent=_parse_date(parts[6]),
-                    content="",  # Not loaded
-                    is_read=parts[7].lower() == "true",
-                    mailbox=parts[8],
-                    account=parts[9],
-                    content_loaded=False,  # Mark as not loaded
-                )
-            )
-
-    return messages
-
-
 def load_message_content(email: EmailMessage) -> str:
     """
-    Load the content for a message that was fetched via get_messages_metadata() - provider agnostic.
+    Load the content for a message that was fetched via get_messages_metadata().
 
-    Uses configured message provider (applescript/sysm/hybrid).
+    Uses sysm for content loading.
 
     This updates the email object in-place AND returns the content.
 
@@ -348,53 +142,13 @@ def load_message_content(email: EmailMessage) -> str:
         email: EmailMessage with content_loaded=False
 
     Returns:
-        The message content (first 5000 chars for AppleScript, full content for sysm).
+        The message content string.
         Also sets email.content and email.content_loaded=True.
     """
     if email.content_loaded:
         return email.content
 
-    # Get settings
-    settings = Settings()
-    provider = settings.message_provider
-
-    # Provider selection
-    if provider in ("sysm", "hybrid"):
-        try:
-            from email_nurse.mail.sysm import load_message_content_sysm
-            return load_message_content_sysm(email)
-        except Exception as e:
-            if provider == "sysm":
-                raise
-            # hybrid mode: fall through to AppleScript
-            logger.warning(f"sysm failed ({e}), falling back to AppleScript for content loading")
-
-    # Default: AppleScript (existing implementation continues below)
-    mailbox_escaped = escape_applescript_string(email.mailbox)
-    account_escaped = escape_applescript_string(email.account)
-
-    script = f'''
-    tell application "Mail"
-        set msg to first message of mailbox "{mailbox_escaped}" of account "{account_escaped}" whose id is {email.id}
-        set msgContent to ""
-        try
-            set msgContent to content of msg
-            if length of msgContent > 5000 then
-                set msgContent to text 1 thru 5000 of msgContent
-            end if
-        end try
-        return msgContent
-    end tell
-    '''
-
-    try:
-        content = run_applescript(script, timeout=30) or ""
-    except Exception:
-        content = ""
-
-    email.content = content
-    email.content_loaded = True
-    return content
+    return load_message_content_sysm(email)
 
 
 def load_message_headers(email: EmailMessage) -> str:
@@ -448,68 +202,24 @@ def get_message_by_id(message_id: str) -> EmailMessage | None:
     Returns:
         EmailMessage if found, None otherwise.
     """
-    script = f'''
-    tell application "Mail"
-        set msg to first message whose id is {message_id}
-        set msgMessageId to message id of msg
-        set msgSubject to subject of msg
-        set msgSender to sender of msg
-        set msgDateReceived to date received of msg as string
-        set msgDateSent to date sent of msg as string
-        set msgRead to read status of msg
-        set msgMailbox to name of mailbox of msg
-        set msgAccount to name of account of mailbox of msg
-
-        set recipList to ""
-        repeat with recip in recipients of msg
-            if recipList is not "" then set recipList to recipList & ","
-            set recipList to recipList & (address of recip)
-        end repeat
-
-        set msgContent to ""
-        try
-            set msgContent to content of msg
-        end try
-
-        -- Use ASCII Unit Separator (31) as delimiter to avoid content collisions
-        set US to (ASCII character 31)
-        return "{message_id}" & US & msgMessageId & US & msgSubject & US & msgSender & US & recipList & US & msgDateReceived & US & msgDateSent & US & msgContent & US & msgRead & US & msgMailbox & US & msgAccount
-    end tell
-    '''
+    from email_nurse.mail.sysm import run_sysm_json, SysmError
 
     try:
-        result = run_applescript(script, timeout=30)
-    except Exception:
+        data = run_sysm_json(["mail", "read", str(message_id), "--json"])
+        if isinstance(data, list):
+            data = data[0] if data else None
+        if not data:
+            return None
+
+        from email_nurse.mail.sysm import parse_sysm_message
+        return parse_sysm_message(data, content_loaded=True)
+    except SysmError:
         return None
-
-    if not result:
-        return None
-
-    parts = result.split(UNIT_SEP)
-    if len(parts) >= 11:
-        return EmailMessage(
-            id=parts[0],
-            message_id=parts[1],
-            subject=parts[2],
-            sender=parts[3],
-            recipients=parts[4].split(",") if parts[4] else [],
-            date_received=_parse_date(parts[5]),
-            date_sent=_parse_date(parts[6]),
-            content=parts[7],
-            is_read=parts[8].lower() == "true",
-            mailbox=parts[9],
-            account=parts[10],
-        )
-
-    return None
 
 
 def get_inbox_count(account: str, mailbox: str = "INBOX") -> int:
     """
-    Get message count for a mailbox (O(1) - just reads count property).
-
-    This is much faster than get_messages() as it doesn't enumerate messages.
-    Used by the watcher for efficient polling.
+    Get message count for a mailbox via sysm.
 
     Args:
         account: Account name to check.
@@ -518,20 +228,7 @@ def get_inbox_count(account: str, mailbox: str = "INBOX") -> int:
     Returns:
         Number of messages in the mailbox, or 0 on error.
     """
-    account_escaped = escape_applescript_string(account)
-    mailbox_escaped = escape_applescript_string(mailbox)
-
-    script = f'''
-    tell application "Mail"
-        return count of messages of mailbox "{mailbox_escaped}" of account "{account_escaped}"
-    end tell
-    '''
-
-    try:
-        result = run_applescript(script, timeout=10)
-        return int(result) if result else 0
-    except (ValueError, Exception):
-        return 0
+    return get_inbox_count_sysm(account, mailbox)
 
 
 def _parse_date(date_str: str) -> datetime | None:

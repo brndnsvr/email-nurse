@@ -1,6 +1,11 @@
-"""AppleScript notifications for email-nurse pending folder alerts."""
+"""Notifications for email-nurse.
+
+Uses sysm CLI for simple banner notifications. AppleScript is kept for
+notify_pending_folders() (modal dialog - sysm only supports banners).
+"""
 
 from email_nurse.applescript.base import escape_applescript_string, run_applescript
+from email_nurse.mail.sysm import notify_sysm
 
 
 def notify_pending_folders(
@@ -8,6 +13,8 @@ def notify_pending_folders(
     title: str = "Email Nurse - Folders Needed",
 ) -> bool:
     """Show a macOS dialog about folders that need to be created.
+
+    Uses AppleScript (sysm only supports banner notifications, not modal dialogs).
 
     Args:
         pending_items: List of dicts with keys:
@@ -72,7 +79,7 @@ def notify_simple(
     title: str = "Email Nurse",
     subtitle: str | None = None,
 ) -> bool:
-    """Show a simple macOS notification banner.
+    """Show a simple macOS notification banner via sysm.
 
     This uses Notification Center and doesn't block - the notification
     appears briefly and then goes to the notification drawer.
@@ -85,24 +92,7 @@ def notify_simple(
     Returns:
         True if notification was shown, False on error.
     """
-    message_escaped = escape_applescript_string(message)
-    title_escaped = escape_applescript_string(title)
-
-    if subtitle:
-        subtitle_escaped = escape_applescript_string(subtitle)
-        script = f'''
-        display notification "{message_escaped}" with title "{title_escaped}" subtitle "{subtitle_escaped}"
-        '''
-    else:
-        script = f'''
-        display notification "{message_escaped}" with title "{title_escaped}"
-        '''
-
-    try:
-        run_applescript(script, timeout=10)
-        return True
-    except Exception:
-        return False
+    return notify_sysm(title, message, subtitle=subtitle)
 
 
 def notify_folders_summary(

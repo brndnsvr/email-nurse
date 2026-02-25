@@ -13,59 +13,6 @@ from email_nurse.mail.messages import (
 from email_nurse.mail.sysm import SysmError
 
 
-class TestAppleScriptMode:
-    """Tests for applescript provider mode (never calls sysm)."""
-
-    @patch("email_nurse.mail.messages.Settings")
-    @patch("email_nurse.mail.messages.run_applescript")
-    def test_get_messages_metadata_never_calls_sysm(self, mock_applescript, mock_settings):
-        """Verify applescript mode never attempts sysm calls."""
-        settings = Settings()
-        settings.message_provider = "applescript"
-        mock_settings.return_value = settings
-
-        # Mock AppleScript response
-        mock_applescript.return_value = ""
-
-        result = get_messages_metadata(limit=10)
-
-        # Should call AppleScript
-        assert mock_applescript.called
-        # Should NOT import or call sysm
-        assert result == []
-
-    @patch("email_nurse.mail.messages.Settings")
-    @patch("email_nurse.mail.messages.run_applescript")
-    def test_get_messages_never_calls_sysm(self, mock_applescript, mock_settings):
-        """Verify applescript mode for get_messages."""
-        settings = Settings()
-        settings.message_provider = "applescript"
-        mock_settings.return_value = settings
-
-        mock_applescript.return_value = ""
-
-        result = get_messages(limit=10)
-
-        assert mock_applescript.called
-        assert result == []
-
-    @patch("email_nurse.mail.messages.Settings")
-    @patch("email_nurse.mail.messages.run_applescript")
-    def test_load_message_content_never_calls_sysm(self, mock_applescript, mock_settings, sample_email):
-        """Verify applescript mode for load_message_content."""
-        settings = Settings()
-        settings.message_provider = "applescript"
-        mock_settings.return_value = settings
-
-        mock_applescript.return_value = "Content loaded via AppleScript"
-        sample_email.content_loaded = False
-
-        result = load_message_content(sample_email)
-
-        assert mock_applescript.called
-        assert result == "Content loaded via AppleScript"
-
-
 class TestSysmMode:
     """Tests for sysm provider mode (never falls back to AppleScript)."""
 
@@ -125,105 +72,6 @@ class TestSysmMode:
         assert not mock_applescript.called
 
 
-class TestHybridMode:
-    """Tests for hybrid provider mode (tries sysm, falls back to AppleScript)."""
-
-    @patch("email_nurse.mail.messages.Settings")
-    @patch("email_nurse.mail.sysm.run_sysm_json")
-    @patch("email_nurse.mail.messages.run_applescript")
-    def test_uses_sysm_when_available(self, mock_applescript, mock_sysm, mock_settings):
-        """Verify hybrid mode uses sysm when it succeeds."""
-        settings = Settings()
-        settings.message_provider = "hybrid"
-        mock_settings.return_value = settings
-
-        mock_sysm.return_value = [{
-            "id": "12345",
-            "subject": "Test",
-            "from": "sender@example.com",
-            "to": "recipient@example.com",
-            "dateReceived": "2025-01-20T10:30:00Z",
-            "dateSent": "2025-01-20T10:25:00Z",
-            "isRead": False,
-            "mailbox": "INBOX",
-            "accountName": "Test Account"
-        }]
-
-        result = get_messages_metadata(limit=10)
-
-        # Should call sysm
-        assert mock_sysm.called
-        # Should NOT call AppleScript (sysm succeeded)
-        assert not mock_applescript.called
-        assert len(result) == 1
-        assert result[0].id == "12345"
-
-    @patch("email_nurse.mail.messages.Settings")
-    @patch("email_nurse.mail.sysm.run_sysm_json")
-    @patch("email_nurse.mail.messages.run_applescript")
-    def test_falls_back_on_error(self, mock_applescript, mock_sysm, mock_settings):
-        """Verify hybrid mode falls back to AppleScript on sysm error."""
-        settings = Settings()
-        settings.message_provider = "hybrid"
-        mock_settings.return_value = settings
-
-        # sysm fails
-        mock_sysm.side_effect = SysmError("sysm failed")
-        # AppleScript succeeds
-        mock_applescript.return_value = ""
-
-        result = get_messages_metadata(limit=10)
-
-        # Both should be called
-        assert mock_sysm.called
-        assert mock_applescript.called
-        # Should return AppleScript result
-        assert result == []
-
-    @patch("email_nurse.mail.messages.Settings")
-    @patch("email_nurse.mail.sysm.run_sysm_json")
-    @patch("email_nurse.mail.messages.run_applescript")
-    def test_falls_back_on_timeout(self, mock_applescript, mock_sysm, mock_settings):
-        """Verify hybrid mode falls back on timeout."""
-        settings = Settings()
-        settings.message_provider = "hybrid"
-        mock_settings.return_value = settings
-
-        from email_nurse.mail.sysm import SysmTimeoutError
-
-        # sysm times out
-        mock_sysm.side_effect = SysmTimeoutError("timed out")
-        # AppleScript succeeds
-        mock_applescript.return_value = ""
-
-        result = get_messages_metadata(limit=10)
-
-        assert mock_sysm.called
-        assert mock_applescript.called
-        assert result == []
-
-    @patch("email_nurse.mail.messages.Settings")
-    @patch("email_nurse.mail.sysm.run_sysm_json")
-    @patch("email_nurse.mail.messages.run_applescript")
-    def test_load_content_fallback(self, mock_applescript, mock_sysm, mock_settings, sample_email):
-        """Verify hybrid mode falls back for load_message_content."""
-        settings = Settings()
-        settings.message_provider = "hybrid"
-        mock_settings.return_value = settings
-
-        # sysm fails
-        mock_sysm.side_effect = SysmError("sysm failed")
-        # AppleScript succeeds
-        mock_applescript.return_value = "AppleScript content"
-        sample_email.content_loaded = False
-
-        result = load_message_content(sample_email)
-
-        assert mock_sysm.called
-        assert mock_applescript.called
-        assert result == "AppleScript content"
-        assert sample_email.content == "AppleScript content"
-        assert sample_email.content_loaded is True
 
 
 class TestProviderConfiguration:
@@ -288,26 +136,6 @@ class TestEndToEnd:
         assert content == "Full email content"
         assert messages[0].content_loaded is True
 
-    @patch("email_nurse.mail.messages.Settings")
-    @patch("email_nurse.mail.sysm.run_sysm_json")
-    @patch("email_nurse.mail.messages.run_applescript")
-    def test_hybrid_graceful_degradation(self, mock_applescript, mock_sysm, mock_settings):
-        """Test hybrid mode gracefully degrades to AppleScript."""
-        settings = Settings()
-        settings.message_provider = "hybrid"
-        mock_settings.return_value = settings
-
-        # sysm fails for metadata
-        mock_sysm.side_effect = SysmError("sysm not available")
-
-        # AppleScript provides fallback (empty result for simplicity)
-        mock_applescript.return_value = ""
-
-        # Should succeed with AppleScript
-        messages = get_messages_metadata(limit=10)
-        assert messages == []
-        assert mock_sysm.called
-        assert mock_applescript.called
 
 
 class TestContentLoadingRetry:
@@ -443,14 +271,14 @@ class TestBatchMoveTracking:
             ),
         ]
 
-        with patch("email_nurse.mail.actions.run_applescript", return_value="2"):
+        with patch("email_nurse.mail.sysm.run_sysm"):
             count, ids = move_messages_batch(moves)
 
         assert count == 2
         assert ids == {"100", "101"}
 
     def test_batch_move_excludes_failed_group_ids(self):
-        """Failed group's message IDs are excluded from moved_ids."""
+        """Failed message IDs are excluded from moved_ids."""
         from email_nurse.mail.actions import PendingMove, move_messages_batch
 
         moves = [
@@ -472,19 +300,18 @@ class TestBatchMoveTracking:
 
         call_count = 0
 
-        def mock_applescript(script, timeout=None):
+        def mock_sysm(cmd, timeout=None):
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                return "1"  # First group succeeds
-            raise TimeoutError("AppleScript timed out")  # Second group fails
+                return ""  # First move succeeds
+            raise SysmError("sysm move failed")  # Second move fails
 
-        with patch("email_nurse.mail.actions.run_applescript", side_effect=mock_applescript):
+        with patch("email_nurse.mail.sysm.run_sysm", side_effect=mock_sysm):
             count, ids = move_messages_batch(moves)
 
         assert count == 1
-        # Only one group's IDs should be in moved_ids
-        assert len(ids) == 1
+        assert ids == {"100"}
 
     def test_batch_move_empty_returns_empty(self):
         """Empty move list returns zero count and empty set."""
@@ -494,8 +321,8 @@ class TestBatchMoveTracking:
         assert count == 0
         assert ids == set()
 
-    def test_batch_move_partial_move_excludes_ids(self):
-        """Partial move (count < group size) excludes IDs conservatively."""
+    def test_batch_move_all_fail_returns_empty(self):
+        """When all moves fail, returns zero count and empty set."""
         from email_nurse.mail.actions import PendingMove, move_messages_batch
 
         moves = [
@@ -515,10 +342,8 @@ class TestBatchMoveTracking:
             ),
         ]
 
-        # AppleScript reports only 1 of 2 moved
-        with patch("email_nurse.mail.actions.run_applescript", return_value="1"):
+        with patch("email_nurse.mail.sysm.run_sysm", side_effect=SysmError("sysm move failed")):
             count, ids = move_messages_batch(moves)
 
-        assert count == 1
-        # Can't tell which moved, so neither should be in moved_ids
+        assert count == 0
         assert ids == set()
