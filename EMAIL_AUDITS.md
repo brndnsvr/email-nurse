@@ -2,6 +2,26 @@
 
 <!-- Run /audit-email to add entries -->
 
+### 2026-02-26 14:00 | 48h | Grade: A
+
+```
+total:334 | rules:112 (34%) | ai:222 (66%)
+delete:1 | move:253 | ignore:80
+folders: CSQR-Support:23 Career:21 Marketing:10 Real-Estate:8 Newsletters:4 Social:3 Orders:3 Notifications:3 Script-Logs:2 Finance:2 Bills:1
+top-rules: LinkedIn-Jobs:17 Csquare-Support-Tickets:15 CSQUARE-Leadership:15 Csquare-SHPC-Support:8 Redfin:7
+```
+
+**Issues:** None
+
+Delete review (1) — correct:
+- Expo-ETF "Social Security Alternative" scheme — classic spam tactics, sensational claims, urgency language (autopilot)
+
+AI routing spot-check (20 moves): All correctly categorized. Marketing: Petlibro promos, Dollar Shave Club, ESET webinar, Expedia VIP Access, Hotels.com deals, TB4A products, Fever/LIV Golf tickets, Home Depot sale, Hims healthcare promo, Schneider Electric, HPE training, Fresh Clean Threads sweepstakes, Tech I Want/Kickstarter. Newsletters: Termius, Node Weekly, NFHS Network, The AI Exchange, Python Weekly, Schwab Market Update.
+
+Ignores appropriate (80): AI ignores (48) all correct — CSquare work threads: security vulnerability assessment, Christopher Ritchie Node Room changes, Cindy Holmes/ORD0006334 test-turn-up coordination x6, Marcus Evans Cogent Circuit, Ernie Maestas PTO, Greg Hayes/Josue Delgado Megaport API deprecation, Landon Baker API migration deadline, project task PRJTASK6641756. Security: Google account access x4, eBay new device sign-in, Anthropic login link, SPFBL abuse report. Appointments: Spine and Pain pre-appointment, medical reminder Feb 27, appointment confirmation Feb 28. Calendar invites: CSquare meetings x3, DX Portal Demo, test-turn-up 3/3. Personal: Zeke Newton eligibility appeal, Scott Vermillion application x2, Walgreens prescription. Financial: Robinhood payment confirmation, Principal Financial rollover info. Notifications: Google Voice voicemail x3. Access: Atlassian Confluence request. Infrastructure: Rancid unattended-upgrades. Rule ignores (32): CSQUARE Leadership x12, Apple News Digest x7, daily.dev Digest x3, USPS Informed Delivery x2, Gate City UMC, Apple Inside, Console Dev Newsletter, UnitedHealthcare, Chase Bank.
+
+---
+
 ### 2026-02-20 12:00 | 24h | Grade: A
 
 ```
