@@ -22,12 +22,14 @@ messages_app = typer.Typer(help="View and process messages")
 autopilot_app = typer.Typer(help="Autopilot mode operations")
 reminders_app = typer.Typer(help="Apple Reminders integration")
 calendar_app = typer.Typer(help="Apple Calendar integration")
+ops_app = typer.Typer(help="Ops: self-healing and maintenance")
 
 app.add_typer(accounts_app, name="accounts")
 app.add_typer(messages_app, name="messages")
 app.add_typer(autopilot_app, name="autopilot")
 app.add_typer(reminders_app, name="reminders")
 app.add_typer(calendar_app, name="calendar")
+app.add_typer(ops_app, name="ops")
 
 
 def get_settings() -> Settings:
@@ -117,6 +119,7 @@ from email_nurse.cli import messages  # noqa: E402, F401
 from email_nurse.cli import autopilot  # noqa: E402, F401
 from email_nurse.cli import reminders  # noqa: E402, F401
 from email_nurse.cli import calendar  # noqa: E402, F401
+from email_nurse.cli import ops  # noqa: E402, F401
 
 if __name__ == "__main__":
     app()

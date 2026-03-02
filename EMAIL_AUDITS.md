@@ -2,6 +2,28 @@
 
 <!-- Run /audit-email to add entries -->
 
+### 2026-02-27 10:30 | 24h | Grade: A
+
+```
+total:156 | rules:57 (37%) | ai:99 (63%)
+delete:1 | move:118 | ignore:37
+folders: Marketing:25 Newsletters:22 Promotional:12 CSQR-Support:9 Career:8 Real-Estate:6 GitHub:6 Social:5 Marketing:4 Notifications:4 Script-Logs:1 Orders:1 Finance:1
+top-rules: Csquare-Support-Tickets:8 CSQUARE-Leadership:7 Redfin:6 LinkedIn-Jobs:6 GitHub:6
+```
+
+**Issues:**
+- Rancid server `root@SP-RANCID2` notifications (2) were AI-ignored instead of filed — **fixed** mid-session with new "Rancid Server Notifications" quick-rule → Notifications
+- NtwkCmdr emails had no quick-rule — **fixed** mid-session with new "NtwkCmdr Notifications" quick-rule → NtwkCmdr
+
+Delete review (1) — correct:
+- Expo-ETF "$500 trillion government windfall" birthright claims scheme — obvious financial scam (autopilot, 95% confidence)
+
+AI routing spot-check (20 moves): All correctly categorized. Marketing: TryHackMe, ESPN (x2), Vivobarefoot, Bealls, Krispy Kreme, Hilton Grand Vacations, Google Flow, Dollar Shave Club. Newsletters: Kilo Code (x2), TLDR, AINews (x2), Cisco Learning, Ollama, DEV Community. Social: Facebook/Gate City Athletics, LinkedIn. Notifications: Google AI Studio (Gemini 3.1 Pro upgrade notice).
+
+Ignores spot-check (37): Correct. Work emails from colleagues (Secret Service security incident thread, Node Room changes, inventory tracking), Google security alerts (Claude/Calendar OAuth, x5), healthcare appointment reminders (x2), Google Voice voicemail, Rancid root@ notifications (x2, now ruled). Rule ignores: Apple News/Inside digests, daily.dev, CSQUARE Leadership (x7), Console Dev Newsletter, Gate City UMC.
+
+---
+
 ### 2026-02-26 14:00 | 48h | Grade: A
 
 ```

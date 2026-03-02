@@ -1249,3 +1249,153 @@ class AutopilotDatabase:
                 (f"-{days} days",),
             )
             return cursor.rowcount
+
+    # ─── Ops / Self-Healing ───────────────────────────────────────────────
+
+    def get_stuck_messages(self, hours: float) -> list[dict[str, Any]]:
+        """Get messages seen by autopilot but never processed.
+
+        Performs a LEFT JOIN of email_first_seen against processed_emails
+        to find messages that have been sitting in inboxes longer than the
+        given threshold without being processed.
+
+        Args:
+            hours: Age threshold in hours.
+
+        Returns:
+            List of dicts with message_id, mailbox, account, first_seen_at.
+        """
+        with self._connection() as conn:
+            cursor = conn.execute(
+                """
+                SELECT f.message_id, f.mailbox, f.account, f.first_seen_at
+                FROM email_first_seen f
+                LEFT JOIN processed_emails p ON f.message_id = p.message_id
+                WHERE p.message_id IS NULL
+                  AND datetime(f.first_seen_at) < datetime('now', ?)
+                ORDER BY f.first_seen_at ASC
+                """,
+                (f"-{hours} hours",),
+            )
+            return [
+                {
+                    "message_id": row["message_id"],
+                    "mailbox": row["mailbox"],
+                    "account": row["account"],
+                    "first_seen_at": row["first_seen_at"],
+                }
+                for row in cursor.fetchall()
+            ]
+
+    def get_last_activity_timestamp(self) -> str | None:
+        """Get the most recent audit_log timestamp.
+
+        Returns:
+            ISO timestamp string of the latest audit entry, or None if empty.
+        """
+        with self._connection() as conn:
+            cursor = conn.execute("SELECT MAX(timestamp) FROM audit_log")
+            row = cursor.fetchone()
+            return row[0] if row else None
+
+    def cleanup_old_audit_log(self, days: int) -> int:
+        """Remove audit_log entries older than N days.
+
+        Args:
+            days: Delete entries older than this many days.
+
+        Returns:
+            Number of records deleted.
+        """
+        with self._connection() as conn:
+            cursor = conn.execute(
+                """
+                DELETE FROM audit_log
+                WHERE datetime(timestamp) < datetime('now', ?)
+                """,
+                (f"-{days} days",),
+            )
+            return cursor.rowcount
+
+    def cleanup_old_first_seen(self, days: int) -> int:
+        """Remove email_first_seen entries older than N days.
+
+        Args:
+            days: Delete entries older than this many days.
+
+        Returns:
+            Number of records deleted.
+        """
+        with self._connection() as conn:
+            cursor = conn.execute(
+                """
+                DELETE FROM email_first_seen
+                WHERE datetime(first_seen_at) < datetime('now', ?)
+                """,
+                (f"-{days} days",),
+            )
+            return cursor.rowcount
+
+    def cleanup_resolved_pending(self, days: int) -> int:
+        """Remove non-pending actions older than N days.
+
+        Only deletes resolved/executed/dismissed actions, never pending ones.
+
+        Args:
+            days: Delete resolved actions older than this many days.
+
+        Returns:
+            Number of records deleted.
+        """
+        with self._connection() as conn:
+            cursor = conn.execute(
+                """
+                DELETE FROM pending_actions
+                WHERE status != 'pending'
+                  AND datetime(created_at) < datetime('now', ?)
+                """,
+                (f"-{days} days",),
+            )
+            return cursor.rowcount
+
+    def get_table_counts(self) -> dict[str, int]:
+        """Get row counts for all tracked tables.
+
+        Returns:
+            Dict mapping table name to row count.
+        """
+        tables = [
+            "processed_emails",
+            "pending_actions",
+            "audit_log",
+            "email_first_seen",
+            "mailbox_cache",
+            "watcher_state",
+            "created_reminders",
+            "created_events",
+            "rule_failures",
+        ]
+        counts: dict[str, int] = {}
+        with self._connection() as conn:
+            for table in tables:
+                cursor = conn.execute(f"SELECT COUNT(*) FROM {table}")  # noqa: S608
+                counts[table] = cursor.fetchone()[0]
+        return counts
+
+    def vacuum(self) -> int:
+        """Run VACUUM to reclaim space. Must use a separate connection outside transactions.
+
+        Returns:
+            Approximate bytes freed (difference in file size before/after).
+        """
+        import os
+
+        size_before = os.path.getsize(self.db_path) if self.db_path.exists() else 0
+        # VACUUM cannot run inside a transaction, so use a raw connection
+        conn = sqlite3.connect(self.db_path)
+        try:
+            conn.execute("VACUUM")
+        finally:
+            conn.close()
+        size_after = os.path.getsize(self.db_path) if self.db_path.exists() else 0
+        return max(0, size_before - size_after)

@@ -745,6 +745,285 @@ launchctl load "$PLIST_DIR/$DIGEST_PLIST_NAME"
 success "Digest LaunchAgent installed (sends daily report at 21:00)"
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Step 6d: Install Ops, Brew, and Log-Rotate Services
+# ─────────────────────────────────────────────────────────────────────────────
+
+info "Installing ops & maintenance scripts..."
+
+# Copy shell scripts from sys-scripts/ to ~/.local/bin/
+OPS_SCRIPTS=(
+    "email-nurse-ops-stuck.sh"
+    "email-nurse-ops-health.sh"
+    "email-nurse-ops-db.sh"
+    "brew-sysm-update.sh"
+    "brew-upgrade-all.sh"
+    "brew-cleanup.sh"
+    "log-rotate.sh"
+)
+
+for script in "${OPS_SCRIPTS[@]}"; do
+    if [[ -f "$REPO_DIR/sys-scripts/$script" ]]; then
+        cp "$REPO_DIR/sys-scripts/$script" "$BIN_DIR/$script"
+        chmod +x "$BIN_DIR/$script"
+    fi
+done
+
+success "Ops scripts installed to $BIN_DIR"
+
+# --- Ops: stuck-check (every 30 min) ---
+OPS_STUCK_PLIST="com.bss.email-nurse-ops-stuck.plist"
+launchctl unload "$PLIST_DIR/$OPS_STUCK_PLIST" 2>/dev/null || true
+
+cat > "$PLIST_DIR/$OPS_STUCK_PLIST" << OPS_STUCK_EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.bss.email-nurse-ops-stuck</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>$BIN_DIR/email-nurse-ops-stuck.sh</string>
+    </array>
+    <key>StartInterval</key>
+    <integer>1800</integer>
+    <key>StandardOutPath</key>
+    <string>$LOG_DIR/email-nurse-ops.log</string>
+    <key>StandardErrorPath</key>
+    <string>$LOG_DIR/email-nurse-ops.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+</dict>
+</plist>
+OPS_STUCK_EOF
+
+launchctl load "$PLIST_DIR/$OPS_STUCK_PLIST"
+success "Ops stuck-check (every 30 min)"
+
+# --- Ops: process-health (every 15 min) ---
+OPS_HEALTH_PLIST="com.bss.email-nurse-ops-health.plist"
+launchctl unload "$PLIST_DIR/$OPS_HEALTH_PLIST" 2>/dev/null || true
+
+cat > "$PLIST_DIR/$OPS_HEALTH_PLIST" << OPS_HEALTH_EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.bss.email-nurse-ops-health</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>$BIN_DIR/email-nurse-ops-health.sh</string>
+    </array>
+    <key>StartInterval</key>
+    <integer>900</integer>
+    <key>StandardOutPath</key>
+    <string>$LOG_DIR/email-nurse-ops.log</string>
+    <key>StandardErrorPath</key>
+    <string>$LOG_DIR/email-nurse-ops.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+</dict>
+</plist>
+OPS_HEALTH_EOF
+
+launchctl load "$PLIST_DIR/$OPS_HEALTH_PLIST"
+success "Ops process-health (every 15 min)"
+
+# --- Ops: db-hygiene (daily 3:00 AM) ---
+OPS_DB_PLIST="com.bss.email-nurse-ops-db.plist"
+launchctl unload "$PLIST_DIR/$OPS_DB_PLIST" 2>/dev/null || true
+
+cat > "$PLIST_DIR/$OPS_DB_PLIST" << OPS_DB_EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.bss.email-nurse-ops-db</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>$BIN_DIR/email-nurse-ops-db.sh</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>3</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>$LOG_DIR/email-nurse-ops.log</string>
+    <key>StandardErrorPath</key>
+    <string>$LOG_DIR/email-nurse-ops.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+</dict>
+</plist>
+OPS_DB_EOF
+
+launchctl load "$PLIST_DIR/$OPS_DB_PLIST"
+success "Ops db-hygiene (daily 3:00 AM)"
+
+# --- Brew: sysm update (hourly) ---
+BREW_SYSM_PLIST="com.bss.email-nurse-brew-sysm.plist"
+launchctl unload "$PLIST_DIR/$BREW_SYSM_PLIST" 2>/dev/null || true
+
+cat > "$PLIST_DIR/$BREW_SYSM_PLIST" << BREW_SYSM_EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.bss.email-nurse-brew-sysm</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>$BIN_DIR/brew-sysm-update.sh</string>
+    </array>
+    <key>StartInterval</key>
+    <integer>3600</integer>
+    <key>StandardOutPath</key>
+    <string>$LOG_DIR/email-nurse-brew-sysm.log</string>
+    <key>StandardErrorPath</key>
+    <string>$LOG_DIR/email-nurse-brew-sysm.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+</dict>
+</plist>
+BREW_SYSM_EOF
+
+launchctl load "$PLIST_DIR/$BREW_SYSM_PLIST"
+success "Brew sysm update (hourly)"
+
+# --- Brew: upgrade all (daily 2:00 AM) ---
+BREW_ALL_PLIST="com.bss.email-nurse-brew-all.plist"
+launchctl unload "$PLIST_DIR/$BREW_ALL_PLIST" 2>/dev/null || true
+
+cat > "$PLIST_DIR/$BREW_ALL_PLIST" << BREW_ALL_EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.bss.email-nurse-brew-all</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>$BIN_DIR/brew-upgrade-all.sh</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>2</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>$LOG_DIR/email-nurse-brew-all.log</string>
+    <key>StandardErrorPath</key>
+    <string>$LOG_DIR/email-nurse-brew-all.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+</dict>
+</plist>
+BREW_ALL_EOF
+
+launchctl load "$PLIST_DIR/$BREW_ALL_PLIST"
+success "Brew upgrade-all (daily 2:00 AM)"
+
+# --- Brew: cleanup (weekly Sunday 3:30 AM) ---
+BREW_CLEANUP_PLIST="com.bss.email-nurse-brew-cleanup.plist"
+launchctl unload "$PLIST_DIR/$BREW_CLEANUP_PLIST" 2>/dev/null || true
+
+cat > "$PLIST_DIR/$BREW_CLEANUP_PLIST" << BREW_CLEANUP_EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.bss.email-nurse-brew-cleanup</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>$BIN_DIR/brew-cleanup.sh</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Weekday</key>
+        <integer>0</integer>
+        <key>Hour</key>
+        <integer>3</integer>
+        <key>Minute</key>
+        <integer>30</integer>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>$LOG_DIR/email-nurse-brew-cleanup.log</string>
+    <key>StandardErrorPath</key>
+    <string>$LOG_DIR/email-nurse-brew-cleanup.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+</dict>
+</plist>
+BREW_CLEANUP_EOF
+
+launchctl load "$PLIST_DIR/$BREW_CLEANUP_PLIST"
+success "Brew cleanup (weekly Sun 3:30 AM)"
+
+# --- Log rotation (daily 3:15 AM) ---
+LOG_ROTATE_PLIST="com.bss.email-nurse-log-rotate.plist"
+launchctl unload "$PLIST_DIR/$LOG_ROTATE_PLIST" 2>/dev/null || true
+
+cat > "$PLIST_DIR/$LOG_ROTATE_PLIST" << LOG_ROTATE_EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.bss.email-nurse-log-rotate</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>$BIN_DIR/log-rotate.sh</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>3</integer>
+        <key>Minute</key>
+        <integer>15</integer>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>$LOG_DIR/email-nurse-ops.log</string>
+    <key>StandardErrorPath</key>
+    <string>$LOG_DIR/email-nurse-ops.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+</dict>
+</plist>
+LOG_ROTATE_EOF
+
+launchctl load "$PLIST_DIR/$LOG_ROTATE_PLIST"
+success "Log rotation (daily 3:15 AM)"
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Step 7: Copy Example Configs (if needed)
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -789,6 +1068,12 @@ echo "  ${BOLD}Daily Digest:${NC}"
 echo "    Sends daily activity report at 21:00"
 echo "    Logs: ${CYAN}$LOG_DIR/email-nurse-digest.log${NC}"
 echo "    Test now: ${CYAN}launchctl start com.bss.email-nurse-digest${NC}"
+echo ""
+echo "  ${BOLD}Ops Services:${NC}"
+echo "    Stuck-check (30min), process-health (15min), db-hygiene (daily 3am)"
+echo "    Brew sysm (hourly), brew upgrade (daily 2am), brew cleanup (Sun 3:30am)"
+echo "    Log rotation (daily 3:15am)"
+echo "    Logs: ${CYAN}$LOG_DIR/email-nurse-ops.log${NC}"
 echo ""
 
 # Migrate API keys if found in .env

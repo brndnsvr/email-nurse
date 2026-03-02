@@ -163,6 +163,29 @@ class Settings(BaseSettings):
         default=None, description="Account to send reports from (uses first enabled if not set)"
     )
 
+    # Ops / self-healing settings
+    ops_stuck_threshold_hours: float = Field(
+        default=2.0, ge=0.5, description="Hours before a message is considered stuck"
+    )
+    ops_stuck_min_count: int = Field(
+        default=3, ge=1, description="Minimum stuck messages to trigger restart"
+    )
+    ops_stuck_cooldown_hours: float = Field(
+        default=4.0, ge=1.0, description="Hours between stuck-restart actions"
+    )
+    ops_silent_minutes: int = Field(
+        default=30, ge=5, description="Minutes of autopilot silence before alerting"
+    )
+    ops_health_cooldown_minutes: int = Field(
+        default=60, ge=5, description="Minutes between health-check restarts"
+    )
+    ops_db_retention_days: int = Field(
+        default=90, ge=7, description="Days to retain audit_log and processed_emails"
+    )
+    ops_db_first_seen_days: int = Field(
+        default=30, ge=7, description="Days to retain email_first_seen records"
+    )
+
     # SMTP settings (for direct email sending without Mail.app)
     smtp_enabled: bool = Field(
         default=False, description="Use direct SMTP instead of Mail.app for sending emails"
