@@ -2,6 +2,26 @@
 
 <!-- Run /audit-email to add entries -->
 
+### 2026-03-03 13:00 | 48h | Grade: A
+
+```
+total:296 | rules:133 (45%) | ai:163 (55%)
+delete:1 | move:246 | ignore:49
+folders: Marketing:65 Newsletters:32 Career:26 CSQR-Support:26 GitHub:25 Social:15 Notifications:13 Finance:11 LibreNMS-Alerts:10 Real-Estate:7 Orders:7 LogicMonitor:4 Healthcare:2 Bills:2
+top-rules: GitHub:25 LinkedIn-Jobs:24 Csquare-Support-Tickets:23 LibreNMS-Alerts:10 Redfin:7
+```
+
+**Issues:** None
+
+Delete review (1) — correct:
+- Clothing vendor giveaway/sweepstakes spam — obvious promotional junk with sweepstakes rules boilerplate (autopilot)
+
+AI routing spot-check (20 moves): All correctly categorized. Social: LinkedIn job recs, LinkedIn News, Facebook story notifications (x2), Facebook group notification, LinkedIn job openings. Newsletters: Vivobarefoot, TLDR, AINews (x3). Marketing: Lucid webinar, Krispy Kreme (x2), The Bouqs, Hilton Grand Vacations, Lyft Business, Samsung Galaxy S26 Ultra. Notifications: Zed Industries TOS update. Minor: Two Lucid webinar emails classified inconsistently (one Newsletters, one Marketing) — both are promotional, Marketing is more appropriate.
+
+Ignores appropriate (49): AI ignores (31) all correct — CSquare work threads: Nebyou Gebreyohannes LE Cogent bringup (x2), John Huntington draft review, Christopher Ritchie customer latency tickets, Ernie Maestas PTO. Personal: Christie Seaver emails (x4, business/personal mix). Security: Google account sign-in alerts (x2), Have I Been Pwned breach notification, Google Cloud credential advisory, Palo Alto Networks EoL deadline. Financial: PayPal/Webull subscription, AWS billing credits (x2), Brightspeed autopay, Apple Card savings statement, Citi statement ($0 balance). Calendar: Easter Egg Hunt invites (x3), Admin Council meeting (x2). Services: AWS support case, NtwkCmdr waitlist, Sneds Tour golf registration (x2), trial-ending subscription notice. Rule ignores (18): CSQUARE Leadership (x5), Apple News Digest (x4), USPS Informed Delivery (x3), Csquare VTB Support (x2), Eastman Credit Union (x2), Gate City UMC (x1).
+
+---
+
 ### 2026-02-27 10:30 | 24h | Grade: A
 
 ```
