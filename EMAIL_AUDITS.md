@@ -2,6 +2,29 @@
 
 <!-- Run /audit-email to add entries -->
 
+### 2026-03-05 11:00 | 48h | Grade: A
+
+```
+total:534 | rules:141 (26%) | ai:393 (74%)
+delete:9 | move:467 | ignore:58
+folders: CSQR-Support:47 Career:20 Marketing:11 Real-Estate:8 Orders:6 Notifications:5 Newsletters:4 GitHub:4 Social:3 Finance:2
+top-rules: Csquare-Support-Tickets:34 LinkedIn-Jobs:13 Csquare-SHPC-Support:11 CSQUARE-Leadership:9 Redfin:8
+```
+
+**Issues:** None
+
+Delete review (9) — all correct:
+- Brick App spam x2 (rule)
+- MedWell Admin automated birthday greeting — obvious automated marketing (autopilot)
+- Financial spam/scam from michaelsfinancecorner.com x5 — obfuscated Unicode text, investment scheme clickbait, pressure tactics (autopilot)
+- Sextortion/blackmail scam — classic phishing with fabricated threats and Bitcoin demands (autopilot)
+
+AI routing spot-check (20 moves): All correctly categorized. Marketing: Samsung laundry promo, online training webinar, Lucid Software webinar, AI Exchange bootcamp, Johnson City Ford x2, Walgreens rewards, Smoothie King. Newsletters: Vivobarefoot, AllTrails, TLDR, Hackr.io. Finance: Schwab market updates x2. Notifications: Cogent outage/maintenance x3. Social: Facebook story notifications x2. Orders: StockyardX shipping.
+
+Ignores appropriate (58): AI ignores (33) all correct — CSquare work threads: AT&T prefix configuration x7 (Asifuddin Mohammad, Aleksandar Petkovic), John Huntington DX one-pager x2, Christopher Ritchie customer cases, Ernie Maestas change management x2. Personal: Christie Seaver workplace incident. Financial: Ford Credit payment confirmation, Atlassian payment failure (correctly left for attention), Megaport overdue balance, HSA tax forms. Calendar: Gate City Graduation x2, future event May 22. Business: SRT Systems server pricing (Conor O'Reilly), Axiom networking inquiry (Julio Chavez), SANS Institute meeting request (Reilly Barnes). Security: Anthropic login link. Services: Zed Industries ToS clarification, vehicle registration renewal. Work: Durga Prasad peering traceroute, HR security awareness notice. Appointment: March 10 confirmation. Rule ignores (25): CSQUARE Leadership x5, Apple News Digest x4, Apple Inside x2, Bespoke Post Shipment Reminders x3, USPS Informed Delivery x2, Console Dev Newsletter, Instacart Orders, and others.
+
+---
+
 ### 2026-03-03 13:00 | 48h | Grade: A
 
 ```
