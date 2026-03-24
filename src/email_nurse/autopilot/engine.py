@@ -142,6 +142,35 @@ class AutopilotEngine(
             return "\n\n## CURRENT CONTEXT (for your awareness)\n" + "\n\n".join(context_parts)
         return ""
 
+    def _build_known_folders_context(self) -> str:
+        """Build a list of known folder names for AI category/folder consistency.
+
+        Collects folder names from quick rules and the mailbox cache so the AI
+        uses exact, canonical folder names instead of inventing variations.
+
+        Returns:
+            String listing known folders, or empty if none available.
+        """
+        folders: set[str] = set()
+
+        # Collect from quick rules
+        for rule in self.config.quick_rules:
+            if rule.folder:
+                folders.add(rule.folder)
+
+        # Collect from mailbox cache
+        if self.mailbox_cache:
+            folders.update(self.mailbox_cache)
+
+        if not folders:
+            return ""
+
+        sorted_folders = sorted(folders)
+        return (
+            "\n\n## KNOWN FOLDERS (use these exact names for target_folder and category)\n"
+            + ", ".join(sorted_folders)
+        )
+
     async def run(
         self,
         *,
@@ -176,32 +205,40 @@ class AutopilotEngine(
         # Reset deferred processed tracking (for quick rules with batched moves)
         self._deferred_processed = []
 
+        # Reset caches (rebuilt on first fetch)
+        for attr in ("_validated_accounts_cache", "_email_queue"):
+            if hasattr(self, attr):
+                delattr(self, attr)
+
         # Load mailbox cache for folder checking
         self._load_mailbox_cache()
-
-        # Get emails to process
-        emails = await self._get_unprocessed_emails(batch_size)
 
         result = AutopilotRunResult(
             started_at=started_at,
             completed_at=started_at,  # Updated at end
-            emails_fetched=len(emails),
+            emails_fetched=0,
             dry_run=dry_run,
         )
 
-        if not emails:
-            result.completed_at = datetime.now()
-            return result
-
-        if verbose >= 1:
-            console.print(f"\n[bold]Processing {len(emails)} emails...[/bold]\n")
-
-        # Process emails in chunks — flush moves between chunks for reliability
+        # Process one email at a time: fetch one, act on it, fetch next.
+        # After each action (move/delete), the inbox changes so the next
+        # fetch reflects reality. No need to bulk-load metadata upfront.
         chunk_size = self.settings.autopilot_chunk_size
         chunk_sleep = self.settings.autopilot_chunk_sleep
         processed_in_chunk = 0
+        printed_header = False
 
-        for email in emails:
+        for _ in range(batch_size):
+            email = await self._get_next_unprocessed_email()
+            if email is None:
+                break
+
+            result.emails_fetched += 1
+
+            if not printed_header and verbose >= 1:
+                console.print(f"\n[bold]Processing emails...[/bold]\n")
+                printed_header = True
+
             try:
                 process_result = await self._process_email(
                     email, dry_run=dry_run, interactive=interactive, auto_create=auto_create
@@ -237,10 +274,12 @@ class AutopilotEngine(
                     console.print(f"[red]Error processing {email.subject[:40]}:[/red] {e}")
                 processed_in_chunk += 1
 
-            # Flush moves at chunk boundary
+            # Flush moves at chunk boundary and clear queue so next
+            # fetch reflects the updated inbox state
             if processed_in_chunk >= chunk_size:
                 if not dry_run:
                     self._flush_pending_moves(verbose)
+                    self._email_queue = []
                     if chunk_sleep > 0:
                         await asyncio.sleep(chunk_sleep)
                 processed_in_chunk = 0
@@ -296,31 +335,23 @@ class AutopilotEngine(
         result.completed_at = datetime.now()
         return result
 
-    async def _get_unprocessed_emails(self, limit: int) -> list[EmailMessage]:
-        """Get emails that haven't been processed yet."""
-        # Get already processed IDs for filtering
-        processed_ids = self.db.get_processed_ids(limit=10000)
+    def _resolve_accounts(self) -> None:
+        """Resolve and cache validated account/mailbox names (once per run)."""
+        if hasattr(self, "_validated_accounts_cache"):
+            return
 
-        # Calculate cutoff date
-        cutoff_date = datetime.now() - timedelta(days=self.config.max_age_days)
-
-        all_emails: list[EmailMessage] = []
-
-        # Fetch from each configured mailbox/account
-        # If no accounts specified, fetch from all enabled accounts
         if self.config.accounts:
-            accounts = self.config.accounts
+            raw_accounts = self.config.accounts
         else:
             try:
                 all_accts = get_accounts()
-                accounts = [a.name for a in all_accts if a.enabled]
+                raw_accounts = [a.name for a in all_accts if a.enabled]
             except Exception as e:
                 console.print(f"[yellow]Warning: Failed to get accounts:[/yellow] {e}")
-                accounts = []
+                raw_accounts = []
 
-        # Validate account names (case-sensitive matching for AppleScript)
-        validated_accounts = []
-        for account in accounts:
+        validated = []
+        for account in raw_accounts:
             try:
                 validated_name = self._validate_account_name(account)
                 if validated_name != account:
@@ -328,50 +359,76 @@ class AutopilotEngine(
                         f"[dim]Note: Using '{validated_name}' "
                         f"(matched from '{account}')[/dim]"
                     )
-                validated_accounts.append(validated_name)
+                validated.append(validated_name)
             except ValueError as e:
                 console.print(f"[red]Error: {e}[/red]")
-                # Skip invalid accounts but continue with others
-        accounts = validated_accounts
+        self._validated_accounts_cache = validated
+
+        self._validated_mailboxes_cache: dict[tuple[str, str], str | None] = {}
+        for mailbox in self.config.mailboxes:
+            for acct in validated:
+                actual = self._validate_mailbox_name(mailbox, acct)
+                if actual is None:
+                    console.print(
+                        f"[yellow]Warning: Mailbox '{mailbox}' not found "
+                        f"in account '{acct}', skipping[/yellow]"
+                    )
+                elif actual != mailbox:
+                    console.print(
+                        f"[dim]Note: Using '{actual}' "
+                        f"(matched from '{mailbox}') for {acct}[/dim]"
+                    )
+                self._validated_mailboxes_cache[(mailbox, acct)] = actual
+
+    async def _get_next_unprocessed_email(self) -> EmailMessage | None:
+        """Return the next unprocessed email, fetching from Mail.app as needed.
+
+        Uses a cached queue: fetches a small metadata batch, filters to
+        unprocessed, and pops one at a time. Only re-fetches when the
+        queue is empty — so one sysm call serves multiple emails.
+        """
+        self._resolve_accounts()
+
+        # Pop from cache if available
+        if hasattr(self, "_email_queue") and self._email_queue:
+            return self._email_queue.pop(0)
+
+        # Cache empty — fetch a fresh batch
+        processed_ids = self.db.get_processed_ids(limit=10000)
+        cutoff_date = datetime.now() - timedelta(days=self.config.max_age_days)
+        accounts = self._validated_accounts_cache
+        queue: list[EmailMessage] = []
 
         for mailbox in self.config.mailboxes:
             for account in accounts:
-                # Validate mailbox name (case-insensitive for Exchange vs IMAP)
-                actual_mailbox = self._validate_mailbox_name(mailbox, account)
+                actual_mailbox = self._validated_mailboxes_cache.get((mailbox, account))
                 if actual_mailbox is None:
-                    console.print(
-                        f"[yellow]Warning: Mailbox '{mailbox}' not found "
-                        f"in account '{account}', skipping[/yellow]"
-                    )
                     continue
-                if actual_mailbox != mailbox:
-                    console.print(
-                        f"[dim]Note: Using '{actual_mailbox}' "
-                        f"(matched from '{mailbox}') for {account}[/dim]"
-                    )
 
                 try:
-                    # Fetch extra to account for filtering out already-processed emails.
-                    # With lazy AppleScript iteration, we can safely fetch more messages
-                    # without timeout risk (only iterates up to limit, doesn't enumerate all).
-                    # Cap at 500 to handle large inboxes with many processed emails.
-                    fetch_limit = min(limit * 3, 500)
                     logger = get_account_logger(account)
-                    logger.info(f"Fetching up to {fetch_limit} emails from {actual_mailbox}")
-                    # Use metadata-only fetch for ~20x speedup (content loaded on-demand)
+                    logger.info(f"Fetching up to 20 emails from {actual_mailbox}")
                     messages = get_messages_metadata(
                         mailbox=actual_mailbox,
                         account=account,
-                        limit=fetch_limit,
-                        unread_only=False,  # Process ALL emails
+                        limit=20,
+                        unread_only=False,
                     )
-                    # Override mailbox with the one we queried (Gmail reports "All Mail"
-                    # for everything, but we need the actual mailbox for lookups)
+                    logger.info(f"Fetched {len(messages)} emails from {actual_mailbox}")
+
                     for msg in messages:
                         if msg.mailbox in VIRTUAL_MAILBOXES or msg.mailbox.startswith("[Gmail]"):
                             msg.mailbox = actual_mailbox
-                    all_emails.extend(messages)
-                    logger.info(f"Fetched {len(messages)} emails from {actual_mailbox}")
+
+                        if msg.id in processed_ids or msg.id in self._processed_this_run:
+                            continue
+                        if msg.date_received and msg.date_received < cutoff_date:
+                            continue
+                        if self._is_excluded(msg):
+                            continue
+
+                        queue.append(msg)
+
                 except Exception as e:
                     logger = get_account_logger(account)
                     logger.error(f"Failed to fetch from {actual_mailbox}: {e}")
@@ -380,36 +437,13 @@ class AutopilotEngine(
                         f"{f' ({account})' if account else ''}:[/yellow] {e}"
                     )
 
-        # Sort by date (newest first) to prioritize recent emails
-        all_emails.sort(key=lambda e: e.date_received or datetime.min, reverse=True)
+        # Sort newest first across all accounts
+        queue.sort(key=lambda e: e.date_received or datetime.min, reverse=True)
+        self._email_queue = queue
 
-        # Filter out already processed and apply age filter
-        unprocessed = []
-        seen_this_fetch: set[int] = set()
-        for email in all_emails:
-            # Skip if already processed (DB) or handled earlier this run
-            if email.id in processed_ids or email.id in self._processed_this_run:
-                continue
-
-            # Skip duplicates within this fetch (Mail.app can return the same message twice)
-            if email.id in seen_this_fetch:
-                continue
-            seen_this_fetch.add(email.id)
-
-            # Skip if too old
-            if email.date_received and email.date_received < cutoff_date:
-                continue
-
-            # Skip if matches exclusion patterns
-            if self._is_excluded(email):
-                continue
-
-            unprocessed.append(email)
-
-            if len(unprocessed) >= limit:
-                break
-
-        return unprocessed
+        if queue:
+            return self._email_queue.pop(0)
+        return None
 
     async def _process_email(
         self,
@@ -485,11 +519,14 @@ class AutopilotEngine(
                     )
 
         try:
-            # Build enriched instructions with PIM context
+            # Build enriched instructions with PIM context and known folders
             enriched_instructions = self.config.instructions
             pim_context = self._build_pim_context()
             if pim_context:
                 enriched_instructions = f"{self.config.instructions}\n{pim_context}"
+            folders_context = self._build_known_folders_context()
+            if folders_context:
+                enriched_instructions = f"{enriched_instructions}\n{folders_context}"
 
             decision = await self.ai.autopilot_classify(email, enriched_instructions)
 

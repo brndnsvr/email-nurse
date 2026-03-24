@@ -444,6 +444,7 @@ class ActionExecutorMixin:
                 "confidence": decision.confidence,
                 "reasoning": decision.reasoning,
                 "category": decision.category,
+                "folder": decision.target_folder,
                 "secondary_action": decision.secondary_action.value if decision.secondary_action else None,
             },
         )

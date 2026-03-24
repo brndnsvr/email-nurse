@@ -238,6 +238,10 @@ def get_messages_metadata_sysm(
 ) -> list["EmailMessage"]:
     """Retrieve message metadata using sysm (no content).
 
+    Uses ``sysm mail search --after`` instead of ``sysm mail inbox`` to
+    avoid enumerating the full mailbox, which causes AppleScript timeouts
+    on large inboxes.
+
     Args:
         mailbox: Mailbox name (default: "INBOX")
         account: Account name filter (optional)
@@ -250,26 +254,38 @@ def get_messages_metadata_sysm(
     Raises:
         SysmError: If sysm command fails
     """
-    # Build command
     if unread_only:
-        cmd = ["mail", "unread"]
+        cmd = ["mail", "unread", "--limit", str(limit), "--json"]
+        if account:
+            cmd.extend(["--account", account])
+        data = run_sysm_json(cmd)
     else:
-        cmd = ["mail", "inbox"]
-
-    cmd.extend(["--limit", str(limit), "--json"])
-
-    if account:
-        cmd.extend(["--account", account])
-
-    # Execute and parse
-    data = run_sysm_json(cmd)
+        # Try inbox listing first. If it times out (common with large
+        # inboxes), fall back to search with a date filter which is
+        # index-backed and doesn't enumerate the full mailbox.
+        cmd = ["mail", "inbox", "--limit", str(limit), "--json"]
+        if account:
+            cmd.extend(["--account", account])
+        try:
+            data = run_sysm_json(cmd)
+        except SysmTimeoutError:
+            logger.info(
+                "Inbox listing timed out, falling back to search"
+            )
+            from datetime import datetime, timedelta
+            after_date = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+            cmd = ["mail", "search", "--after", after_date,
+                   "--limit", str(limit), "--json"]
+            if account:
+                cmd.extend(["--account", account])
+            data = run_sysm_json(cmd)
 
     # Convert to list if single message returned as dict
     if isinstance(data, dict):
         data = [data]
 
-    # Parse messages — override mailbox from caller since sysm inbox
-    # listing doesn't include it (avoids "INBOX" vs "Inbox" mismatch)
+    # Parse messages — override mailbox from caller since sysm search
+    # doesn't filter by mailbox (avoids "INBOX" vs "Inbox" mismatch)
     messages = [parse_sysm_message(msg, content_loaded=False) for msg in data]
     for msg in messages:
         msg.mailbox = mailbox
