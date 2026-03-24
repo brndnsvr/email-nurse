@@ -2,6 +2,82 @@
 
 <!-- Run /audit-email to add entries -->
 
+### 2026-03-22 13:00 | 48h | Grade: A
+
+```
+total:59 | rules:20 (34%) | ai:39 (66%)
+delete:4 | move:44 | ignore:9 | create_reminder:2
+folders: Marketing:17 Newsletters:6 Real-Estate:4 Social:3 Notifications:3 Orders:2 GitHub:2 Finance:2 Career:2 CSQR-Support:2
+top-rules: Zillow-Market-Updates:2 Redfin:2 LinkedIn-Jobs:2 GitHub:2 Csquare-Support-Tickets:2
+```
+
+**Issues:** None
+
+Delete review (4) — all correct:
+- USA Insider News financial fear-mongering/geopolitical clickbait spam x2
+- True Capital Talk obfuscated-text trading secrets spam x1
+- Health supplement clickbait (Japanese food quiz scam) x1
+
+AI routing spot-check (20 moves): All correctly categorized. Marketing: Spotify re-subscribe promo, birddogs NCAA merch, Dollar Shave Club, Harper Auto Wash, Samsung promos x2, Tech I Want Kickstarter, TaxAct, Schwab futures promo, webinar registration, Vipzoon promo, Walgreens rewards, Bealls Rewards. Finance: Robinhood statement. Newsletters: Schwab market update. Social: LinkedIn job notifications x2. Orders: Amazon order confirmations x2. Notifications: Slack mention.
+
+Ignores appropriate (9): AI ignores (5) — Microsoft Family Safety reports x2 (Trent, Cameron), Apple payment failure (correctly left in inbox per urgent billing rule), Csquare AD password expiry (reminder already set for 2026-03-25), NFHS Network sports events (family schedule). Rule ignores (4): CSQUARE Leadership x2, daily.dev Digest, USPS Informed Delivery.
+
+---
+
+### 2026-03-18 12:00 | 96h | Grade: A
+
+```
+total:565 | rules:132 (23%) | ai:433 (77%)
+delete:24 | move:474 | ignore:65 | create_reminder:2
+folders: Finance:129 Marketing:108 Notifications:39 Newsletters:27 Career:25 CSQR-Support:21 Social:19 LibreNMS-Alerts:15 Orders:15 Real-Estate:11 GitHub:11 Config-Diffs:4
+top-rules: LinkedIn-Jobs:23 LibreNMS-Alerts:15 Csquare-Support-Tickets:15 GitHub:11 Redfin:10
+```
+
+**Issues:** None (minor note below)
+
+Delete review (24) — all correct:
+- USA Insider News financial clickbait/investment scam spam x6 (autopilot)
+- True Capital Talk obfuscated-text health/financial scam x4 (autopilot)
+- Medicine & Herbs health supplement spam x3 (autopilot)
+- NewMarket Health deceptive health scare marketing x1 (autopilot)
+- Financial scam with obfuscated Unicode text and "get rich quick" pitches x10 (autopilot)
+
+AI routing spot-check (20 moves): All correctly categorized. Marketing: Robinhood bonus promo, USA Insider News, Affinity, Expedia, Hotels.com, Brownstone Research/TCT x2. Finance: Robinhood transaction confirmation, Robinhood daily statement. Newsletters: DEV Community, AINews x2. Notifications: Statuspage Claude API incidents x2, CodeSandbox deprecation, Palo Alto Networks, Alibaba Cloud onboarding. Social: LinkedIn job notification. Service: Chess.com anniversary notification.
+
+Ignores appropriate (65): AI ignores (45) all correct — Work: CSquare CS2145677 outage thread x3 (BGP troubleshooting), Cruz Rodriguez meeting request. Security: Google account access alerts x6, DoorDash new login, Anthropic login link, Apple app-specific password. Financial: Robinhood deposit from ECU, Apple Card payment x2, Robinhood credit card payment, Venmo payment from contact. Appointments: Carlson Eyecare reminders x3, sports event. Calendar: future meeting invites x2 (Maxwell Buehler, Mar 19 event). Healthcare: Walgreens prescription refill, Spine and Pain billing. Education: PowerSchool progress/attendance x2. Personal: Karen Linkous church correspondence x2. Infrastructure: NtwkCmdr alerts x6. Other: Farmer Auctions estate sale, Quick Lane service surveys x2, OpenClaw gateway alert, TestFlight notification, Mem feedback request, IT asset disposal inquiry. Rule ignores (20): daily.dev Digest, Apple News Digest, CSQUARE Leadership, others.
+
+**Note:** AI category naming is inconsistent (e.g., "marketing" vs "Marketing", "newsletters" vs "newsletter", "financial" vs "Finance") — not a functional issue if folder mapping normalizes these, but worth monitoring. Two order receipts (Obsidian license, Anthropic subscription) categorized as "financial" despite reasoning citing Orders — minor misroute.
+
+---
+
+### 2026-03-10 12:00 | 72h | Grade: A
+
+```
+total:370 | rules:164 (44%) | ai:206 (56%)
+delete:16 | move:302 | ignore:52
+folders: Marketing:84 CSQR-Support:41 Newsletters:32 Orders:29 Career:22 Notifications:22 GitHub:19 Config-Diffs:15 Real-Estate:11 Social:11 Finance:10 NtwkCmdr:5 Healthcare:1
+top-rules: Csquare-Support-Tickets:27 LinkedIn-Jobs:20 GitHub:19 Rancid-Config-Diffs:15 Csquare-SHPC-Support:14
+```
+
+**Issues:** None
+
+Delete review (16) — all correct:
+- Brick App spam x2 (rule)
+- USA Insider News clickbait political/financial spam x2 (autopilot)
+- True Capital Talk obfuscated-text financial scam/health scare x3 (autopilot)
+- Health supplement scam with "hidden Vision Switch" claims (autopilot)
+- iFlirts dating service spam x2 (autopilot)
+- Memory supplement spam with fear-mongering tactics (autopilot)
+- Reagan Gold Group precious metals investment scam x2 (autopilot)
+- Financial scam with "$500 trillion birthright claim" (autopilot)
+- WHOIS contact form web design solicitation (autopilot)
+
+AI routing spot-check (20 moves): All correctly categorized. Social: Facebook notifications x2. Marketing: USA Insider investment ad, Trending Kickstarters, Krispy Kreme St. Patrick's, Hilton Grand Vacations, Samsung pre-order, Dollar Shave Club, True Capital Talk promo, Hulu. Newsletters: TLDR, Latent.Space, AINews x2, Glassdoor community digest. Orders: Warp subscription receipt, Walgreens purchase receipt, Scholastic Book Fair eWallet. Notifications: Palo Alto Networks content updates, Scholastic eWallet funds added.
+
+Ignores appropriate (52): AI ignores (33) all correct — Calendar invites: Apr 9 Lunch n Learn, Apr 23 event, Mar 20 meetings x2, Mar 9 meetings x2, soccer practices/games (Trent Seaver) x7. Healthcare: Walgreens prescription pickup x2, Zepbound out-of-stock notification. Educational: PowerSchool progress report and attendance (Ayden S.). Personal: Ernie Maestas dr appointment, Christie Seaver (not seen). Financial: Robinhood credit card payment confirmation, refund notification. Security: Link new login notification. Parental: Microsoft Family Safety x2. Sports: soccer team assignment, registration confirmation. Other: donation receipt, Google Voice missed call. Rule ignores (19): Apple News Digest x4, daily.dev Digest x2, USPS Informed Delivery x3, Csquare HR x2, CSQUARE Leadership x2, Gate City UMC, Csquare VTB Support, Apple Inside, Chase Bank.
+
+---
+
 ### 2026-03-05 11:00 | 48h | Grade: A
 
 ```

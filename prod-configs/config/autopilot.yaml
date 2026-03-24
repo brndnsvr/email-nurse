@@ -1,0 +1,789 @@
+# Autopilot Configuration
+# Natural language instructions for AI email processing
+
+# Message retrieval provider (applescript, sysm, hybrid)
+# sysm is 44-51% faster for message retrieval
+message_provider: sysm
+
+# Your instructions to the AI - be specific about what you want
+instructions: |
+  You are managing my personal email inbox. Follow these guidelines:
+
+  1. NEWSLETTERS & MARKETING:
+     - Move promotional emails to "Marketing" folder
+     - Move newsletters I'm subscribed to to "Newsletters" folder
+     - Delete obvious spam
+
+  2. IMPORTANT:
+     - Flag emails from my contacts list as important
+     - Leave emails about appointments or travel alone (ignore action)
+     - Never delete emails from real people
+
+  3. FINANCIAL EMAILS:
+     - Eastman Credit Union (ECU) or Chase: leave in inbox (ignore action)
+     - Payment failures, declined payments, billing errors, or "unable to process payment" emails from ANY sender: leave in inbox (ignore action) — these are urgent and need immediate attention
+     - All other financial/banking emails: move to "Finance" folder
+
+  4. NOTIFICATIONS:
+     - Move automated notifications from services (GitHub, etc.) to "Notifications" folder
+     - Move social media notifications (LinkedIn, Facebook, Instagram, TikTok, etc. but NOT Reddit) to Social folder
+
+  5. REPLIES:
+     - Do not auto-reply to anything without my approval
+
+  6. SORTING EMAIL INTO FOLDERS:
+     - Keep emails on their own account — move to folders on the same account the email came from
+     - Trash and Archive operations stay on the originating account
+
+  7. CALENDAR INVITES:
+     - If an email is a calendar invite/meeting request and the event date has PASSED, delete it
+     - Future calendar invites: leave in inbox (ignore action)
+     - Look for event dates in the subject line or email body to determine if past/future
+
+  8. REMINDERS:
+     - You may create reminders for emails that need follow-up
+     - NEVER create reminders for monitoring/alerting emails from:
+       LibreNMS, LogicMonitor, NtwkCmdr, or Rancid
+
+  9. ARCHIVE ACTION:
+     - NEVER use the 'archive' action
+     - If you would archive something, use 'ignore' instead to leave it in the inbox
+     - Or move it to an appropriate folder
+
+  10. ORDER CONFIRMATIONS & SHIPMENTS:
+      - Order confirmations, receipts → move to "Orders" folder
+      - ALL shipping/delivery notifications (Amazon shipment-tracking, UPS, FedEx, USPS tracking) → move to "Orders" folder
+      - Do NOT move shipment notifications to "Notifications" - they belong in "Orders"
+      - Do NOT classify vendor order emails as Marketing
+
+  When in doubt, use 'ignore' action to leave email untouched.
+
+# Mailboxes to process
+mailboxes:
+  - INBOX
+
+# Specific accounts to process (empty = all accounts)
+accounts:
+  - iCloud
+  - CSquare
+  - Gmail
+
+# Maximum age of emails to process (days)
+max_age_days: 3000
+
+# Central account for all move/archive operations (optional)
+# If set, emails from other accounts will be moved to folders on this account
+# main_account: iCloud
+
+# Folders that route to local "On My Mac" mailboxes instead of account folders
+# Messages matching rules for these folders will be moved to local storage
+# Uncomment to enable local folder routing:
+# local_folders:
+#   - Newsletters
+#   - Marketing
+#   - Real Estate
+
+# Senders to exclude (substring match)
+exclude_senders:
+  - "noreply@yourbank.com"
+  - "security@"
+
+# Subjects to exclude (substring match)
+exclude_subjects:
+  - "Password Reset"
+  - "Two-Factor"
+  - "2FA"
+  - "Verification Code"
+
+# Quick rules - processed BEFORE AI (instant, no API cost)
+# First match wins, so put specific rules before general ones
+#  Match conditions available:
+#  - sender_contains: [list] - substring match in sender
+#  - subject_contains: [list] - substring match in subject
+#  - sender_domain: [list] - email domain match
+#
+#  Actions available:
+#  - delete - move to trash
+#  - move - requires folder: field
+#  - archive - move to Archive
+#  - mark_read - just mark as read
+#  - ignore - skip, don't pass to AI either
+
+quick_rules:
+  # Phishing security tests (X-PHISH header) → Phishing folder
+  - name: "Phishing Security Tests"
+    match:
+      header_contains: ["phishing security test"]
+    action: move
+    folder: Phishing
+
+  # LogicMonitor alerts → ignore (Outlook server-side rule handling moves)
+  - name: "LogicMonitor Alerts"
+    match:
+      sender_contains: ["alerter@evoquedcs.logicmonitor.com"]
+    action: ignore
+
+  # LogicMonitor reports → LogicMonitor folder
+  - name: "LogicMonitor Reports"
+    match:
+      sender_contains: ["reports@evoquedcs.logicmonitor.com"]
+      subject_contains: ["Report"]
+    action: move
+    folder: LogicMonitor
+
+  # LibreNMS alerts → LibreNMS Alerts folder
+  - name: "LibreNMS Alerts"
+    match:
+      sender_contains: ["networkoperations@centersquaredc.com"]
+      subject_contains: ["LibreNMS Alert"]
+    action: move
+    folder: LibreNMS Alerts
+
+  # Csquare SHPC support emails → CSQR Support folder
+  - name: "Csquare SHPC Support"
+    match:
+      sender_contains: ["support@csquare.com"]
+      subject_contains: ["Csquare SHPC"]
+    action: move
+    folder: CSQR Support
+
+  # Csquare VTB support emails → leave in inbox
+  - name: "Csquare VTB Support"
+    match:
+      sender_contains: ["support@csquare.com"]
+      subject_contains: ["VTB"]
+    action: ignore
+
+  # Csquare support tickets (catch-all) → CSQR Support folder
+  - name: "Csquare Support Tickets"
+    match:
+      sender_contains: ["support@csquare.com"]
+    action: move
+    folder: CSQR Support
+
+  # Rancid config diffs → Config Diffs folder
+  - name: "Rancid Config Diffs"
+    match:
+      sender_contains: ["rancid@rancid.evoque-corp.com", "rancid@SP-RANCID2.evoquedcs.com"]
+    action: move
+    folder: Config Diffs
+
+  # Rancid server root notifications → Notifications folder
+  - name: "Rancid Server Notifications"
+    match:
+      sender_contains: ["root@SP-RANCID2.evoquedcs.com", "root@rancid.evoque-corp.com"]
+    action: move
+    folder: Notifications
+
+  # NtwkCmdr notifications → NtwkCmdr folder
+  - name: "NtwkCmdr Notifications"
+    match:
+      sender_contains: ["@ntwkcmdr.com", "ntwkcmdr@csquare.com", "ntwkcmdr@centersquaredc.com"]
+    action: move
+    folder: NtwkCmdr
+
+  # LinkedIn job alerts → Career folder
+  - name: "LinkedIn Jobs"
+    match:
+      sender_contains: ["jobalerts-noreply@linkedin.com"]
+    action: move
+    folder: Career
+
+  # Known spam senders → Junk
+  - name: "Known Spam"
+    match:
+      sender_contains: ["@spamsite.com", "bad@actor.com"]
+    action: delete
+
+  # GitHub notifications → GitHub folder
+  - name: "GitHub"
+    match:
+      sender_domain: ["github.com"]
+    action: move
+    folder: GitHub
+
+  # Today Market Insight spam → mark read + Trash
+  - name: "Today Market Insight Spam"
+    match:
+      sender_domain: ["todaymarketinsight.com"]
+    actions: [mark_read, delete]
+
+  # Think Rich Today spam → mark read + Trash (all subdomains)
+  - name: "Think Rich Today Spam"
+    match:
+      sender_contains: ["@thinkrichtoday.com"]
+    actions: [mark_read, delete]
+
+  # USPS Informed Delivery → leave in inbox
+  - name: "USPS Informed Delivery"
+    match:
+      sender_contains: ["USPSInformeddelivery@email.informeddelivery.usps.com"]
+    action: ignore
+
+  # daily.dev digest → leave in inbox (time-critical)
+  - name: "daily.dev Digest"
+    match:
+      sender_contains: ["informer@daily.dev"]
+    action: ignore
+
+  # Redfin (all emails) → Real Estate folder
+  - name: "Redfin"
+    match:
+      sender_domain: ["redfin.com"]
+    action: move
+    folder: Real Estate
+
+  # Zillow market updates → Real Estate folder
+  - name: "Zillow Market Updates"
+    match:
+      sender_contains: ["market-updates@mail.zillow.com"]
+    action: move
+    folder: Real Estate
+
+  # Gate City UMC → leave in inbox
+  - name: "Gate City UMC"
+    match:
+      sender_contains: ["gatecityumc"]
+    action: ignore
+
+  # Eastman Credit Union (ECU) → leave in inbox
+  - name: "Eastman Credit Union"
+    match:
+      sender_domain: ["ecu.org"]
+    action: ignore
+
+  # Chase Bank → leave in inbox
+  - name: "Chase Bank"
+    match:
+      sender_domain: ["chase.com", "jpmorgan.com"]
+    action: ignore
+
+  # Google forwarding notifications → leave in inbox
+  - name: "Google Forwarding"
+    match:
+      sender_contains: ["forwarding-noreply@google.com"]
+    action: ignore
+
+  # Seed of Hope Notices
+  - name: "Seed of Hope"
+    match:
+      sender_contains: ["SeedofHopeCounseling@secure-client-area.com"]
+    action: move
+    folder: Healthcare
+
+  # Apple News Digest → leave in inbox
+  - name: "Apple News Digest"
+    match:
+      sender_contains: ["newsdigest@insideapple.apple.com"]
+    action: ignore
+
+  # Apple Inside (internal Apple emails) → leave in inbox
+  - name: "Apple Inside"
+    match:
+      sender_domain: ["insideapple.apple.com"]
+    action: ignore
+
+  # CNET Training → Marketing
+  - name: "CNET Training"
+    match:
+      sender_contains: ["training@cnet-education.com"]
+    action: move
+    folder: Marketing
+
+  # KnowBe4 CyberHeist News → Marketing
+  - name: "KnowBe4 Newsletter"
+    match:
+      sender_contains: ["newsletter@cyberheistnews.knowbe4.com"]
+    action: move
+    folder: Marketing
+
+  # Zscaler Communications → Marketing
+  - name: "Zscaler"
+    match:
+      sender_contains: ["communications@zscaler.com"]
+    action: move
+    folder: Marketing
+
+  # Marcus Evans → leave in inbox
+  - name: "Marcus Evans"
+    match:
+      sender_contains: ["marcus.evans@csquare.com"]
+    action: ignore
+
+  # CSQUARE Leadership → leave in inbox
+  - name: "CSQUARE Leadership"
+    match:
+      sender_contains: ["Jaclyn.Mispagel@csquare.com", "reza.ambler@csquare.com", "josue.delgado@csquare.com"]
+    action: ignore
+
+  # Welcome to the Jungle job alerts → Career folder
+  - name: "Welcome to the Jungle Jobs"
+    match:
+      sender_domain: ["welcometothejungle.com"]
+    action: move
+    folder: Career
+
+  # LinkedIn Job Listings → Career folder
+  - name: "LinkedIn Job Listings"
+    match:
+      sender_contains: ["jobs-listings@linkedin.com"]
+    action: move
+    folder: Career
+
+  # Reddit via Apple Private Relay → Newsletters
+  - name: "Reddit Newsletters"
+    match:
+      sender_contains: ["noreply_at_redditmail_com"]
+    action: move
+    folder: Newsletters
+
+  # UPS Notifications → Orders
+  - name: "UPS Notifications"
+    match:
+      sender_contains: ["mcinfo@ups.com"]
+    action: move
+    folder: Orders
+
+  # Hyper-Reach Alerts → Notifications
+  - name: "Hyper-Reach Alerts"
+    match:
+      sender_contains: ["noreply@hyper-reach.com"]
+    action: move
+    folder: Notifications
+
+  # LinkedIn Groups → Social
+  - name: "LinkedIn Groups"
+    match:
+      sender_contains: ["groups-noreply@linkedin.com"]
+    action: move
+    folder: Social
+
+  # Instacart Orders → leave in inbox
+  - name: "Instacart Orders"
+    match:
+      sender_contains: ["orders@instacart.com"]
+    action: ignore
+
+  # Hostinger → leave in inbox
+  - name: "Hostinger"
+    match:
+      sender_contains: ["team@info.hostinger.com"]
+    action: ignore
+
+  # Kickstarter marketing → Marketing
+  - name: "Kickstarter Marketing"
+    match:
+      sender_contains: ["team@kickstarnow.com"]
+    action: move
+    folder: Marketing
+
+  # EGO Power Plus → Marketing
+  - name: "EGO Power Plus"
+    match:
+      sender_contains: ["noreply@egopowerplus.com"]
+    action: move
+    folder: Marketing
+
+  # VRBO → Marketing
+  - name: "VRBO"
+    match:
+      sender_contains: ["mail@eg.vrbo.com"]
+    action: move
+    folder: Marketing
+
+  # ZeroHedge → Junk
+  - name: "ZeroHedge"
+    match:
+      sender_contains: ["articles@zerohedge.com"]
+    action: delete
+
+  # NtwkCmdr scheduled reports → NtwkCmdr folder
+  - name: "NtwkCmdr Reports"
+    match:
+      sender_contains: ["cmdr@ntwkcmdr.com"]
+      subject_contains: ["SYS_AVAIL_CHECK", "WEEKLY_OEN_ANALYSIS", "WEEKLY_LEF_ANALYSIS", "WEEKLY_OEN_REPORT", "WEEKLY_LEF_REPORT", "WEEKLY_TOR_REPORT", "DAILY_COLLECT"]
+    action: move
+    folder: NtwkCmdr
+
+  # NtwkCmdr Alerts (catch-all) → Notifications
+  - name: "NtwkCmdr Alerts"
+    match:
+      sender_contains: ["cmdr@ntwkcmdr.com"]
+    action: move
+    folder: Notifications
+
+  # SPFBL abuse reports → Notifications
+  - name: "SPFBL Abuse Reports"
+    match:
+      sender_contains: ["admin@spfbl.net"]
+    action: move
+    folder: Notifications
+
+  # Csquare fd-checker notifications → Notifications folder
+  - name: "FD Checker Notifications"
+    match:
+      sender_contains: ["fd-checker@csquare.com"]
+    action: move
+    folder: Notifications
+
+  # Slack Marketing → Marketing
+  - name: "Slack Marketing"
+    match:
+      sender_contains: ["no-reply@email.slackhq.com"]
+    action: move
+    folder: Marketing
+
+  # Brick App Spam → delete
+  - name: "Brick App Spam"
+    match:
+      sender_domain: ["getbrick.app"]
+    action: delete
+
+  # Spicedates spam → delete
+  - name: "Spicedates Spam"
+    match:
+      sender_domain: ["spicedates.com"]
+    action: delete
+
+  # Bespoke Post Club Shipment reminders → leave in inbox
+  - name: "Bespoke Post Shipment Reminders"
+    match:
+      sender_contains: ["accounts@bespokepost.com"]
+      subject_contains: ["Club Shipment Closes"]
+    action: ignore
+
+  # Amazon shipment notifications → Orders (explicit routing)
+  - name: "Amazon Shipments"
+    match:
+      sender_contains: ["shipment-tracking@amazon.com", "order-update@amazon.com"]
+    action: move
+    folder: Orders
+
+  # Disney+ Marketing → Marketing
+  - name: "Disney+ Marketing"
+    match:
+      sender_contains: ["disneyplus@messaging.disneyplus.com"]
+    action: move
+    folder: Marketing
+
+  # Schwab Closing Summary → Finance
+  - name: "Schwab Closing Summary"
+    match:
+      sender_contains: ["donotreply@mail.schwab.com"]
+      subject_contains: ["Closing Summary"]
+    action: move
+    folder: Finance
+
+  - name: "PMA Surgery Center Statements"
+    match:
+      sender_contains: ["noreply@advancedmd.com"]
+      subject_contains: ["Pain Medicine Associates"]
+    action: ignore
+
+  - name: "UnitedHealthcare"
+    match:
+      sender_contains: ["@benefits.unitedhealthcare.com", "@eDelivery.uhc.com"]
+    action: ignore
+
+  - name: "TradingView"
+    match:
+      sender_contains: ["noreply@tradingview.com"]
+    action: ignore
+
+  - name: "City of Kingsport Utility"
+    match:
+      sender_contains: ["utilbill@kingsporttn.gov"]
+    action: move
+    folder: Bills
+
+  - name: "Appalachian Power"
+    match:
+      sender_contains: ["@Appalachianpoweraep.com", "@aep.com", "@aep-email.com"]
+    action: move
+    folder: Bills
+
+  - name: "State Farm Billing"
+    match:
+      sender_contains: ["@statefarmservice.com"]
+    action: move
+    folder: Bills
+
+  - name: "Electrify America"
+    match:
+      sender_contains: ["@electrifyamerica.com"]
+    action: move
+    folder: Bills
+
+  - name: "Verizon Wireless"
+    match:
+      sender_contains: ["@ecrmemail.verizonwireless.com", "@customer.verizon.com"]
+    action: move
+    folder: Bills
+
+  - name: "Console Dev Newsletter"
+    match:
+      sender_contains: ["weekly@console.dev"]
+    action: ignore
+
+  # Csquare Service Delivery Orders → CSQR Support
+  - name: "Csquare Service Delivery Orders"
+    match:
+      subject_contains: ["Centersquare Order ORD"]
+    action: move
+    folder: CSQR Support
+
+  # Csquare Notifications (maintenance, weather, etc.) → Notifications
+  - name: "Csquare Notifications"
+    match:
+      sender_contains: ["noreply@csquare.com"]
+    action: move
+    folder: Notifications
+
+  # Csquare Weekly Newsletter → Newsletters
+  - name: "Csquare News"
+    match:
+      sender_contains: ["news@csquare.com"]
+    action: move
+    folder: Newsletters
+
+  # Csquare HR → leave in inbox
+  - name: "Csquare HR"
+    match:
+      sender_contains: ["AskHR@csquare.com"]
+    action: ignore
+
+  # Csquare InfoSec & SOC → leave in inbox
+  - name: "Csquare Security"
+    match:
+      sender_contains: ["infosec@csquare.com", "soc@csquare.com"]
+    action: ignore
+
+  # --- Marketing bulk rules ---
+
+  - name: "Samsung Marketing"
+    match:
+      sender_contains: ["@innovations.samsungusa.com", "@samsung.com"]
+    action: move
+    folder: Marketing
+
+  - name: "Dollar Shave Club"
+    match:
+      sender_contains: ["@dollarshaveclub.com"]
+    action: move
+    folder: Marketing
+
+  - name: "DoorDash Marketing"
+    match:
+      sender_contains: ["@messages.doordash.com"]
+    action: move
+    folder: Marketing
+
+  - name: "Home Depot"
+    match:
+      sender_contains: ["@mg.homedepot.com", "@homedepot.com"]
+    action: move
+    folder: Marketing
+
+  - name: "Codecademy"
+    match:
+      sender_contains: ["@mail.codecademy.com"]
+    action: move
+    folder: Marketing
+
+  - name: "Expedia"
+    match:
+      sender_contains: ["@eg.expedia.com"]
+    action: move
+    folder: Marketing
+
+  - name: "Zenni Optical"
+    match:
+      sender_contains: ["zenni", "zennioptical"]
+    action: move
+    folder: Marketing
+
+  - name: "Fresh Clean Threads"
+    match:
+      sender_contains: ["@freshcleantees.com"]
+    action: move
+    folder: Marketing
+
+  - name: "Trending Kickstarters"
+    match:
+      sender_contains: ["@trendingkickstarter.com"]
+    action: move
+    folder: Marketing
+
+  - name: "Walgreens Photo"
+    match:
+      sender_contains: ["walgreens@eml.walgreens.com"]
+    action: move
+    folder: Marketing
+
+  - name: "Paka Apparel"
+    match:
+      sender_contains: ["@pakaapparel.com"]
+    action: move
+    folder: Marketing
+
+  - name: "Groupon"
+    match:
+      sender_contains: ["@r.groupon.com"]
+    action: move
+    folder: Marketing
+
+  - name: "Peacock Marketing"
+    match:
+      sender_contains: ["@messaging.peacocktv.com"]
+    action: move
+    folder: Marketing
+
+  - name: "Bespoke Post Marketing"
+    match:
+      sender_contains: ["help@bespokepost.com"]
+    action: move
+    folder: Marketing
+
+  - name: "Pocket Marketing"
+    match:
+      sender_contains: ["@heypocket.com"]
+    action: move
+    folder: Marketing
+
+  - name: "Airtable Marketing"
+    match:
+      sender_contains: ["@mail.airtable.com"]
+    action: move
+    folder: Marketing
+
+  - name: "Tiiny AI Marketing"
+    match:
+      sender_contains: ["@tiiny.ai"]
+    action: move
+    folder: Marketing
+
+  # --- Spam/delete rules ---
+
+  - name: "Medicine & Herbs Spam"
+    match:
+      sender_contains: ["@medicineandherbs.com"]
+    action: delete
+
+  - name: "Solrano Spam"
+    match:
+      sender_contains: ["@solrano.com"]
+    action: delete
+
+  - name: "Republican Task Force Spam"
+    match:
+      sender_contains: ["@alert.republicantaskforce.com"]
+    action: delete
+
+  - name: "USA Insider News Spam"
+    match:
+      sender_contains: ["@usainsidernews.com", "@fresh.usainsidernews.com"]
+    action: delete
+
+  - name: "Neighborhood Alerts Spam"
+    match:
+      sender_contains: ["@neighborhoodalerts.com"]
+    action: delete
+
+  # --- Newsletter rules ---
+
+  - name: "Latent Space Newsletter"
+    match:
+      sender_contains: ["swyx@substack.com", "swyx+"]
+    action: move
+    folder: Newsletters
+
+  - name: "AI Exchange Newsletter"
+    match:
+      sender_contains: ["theaiexchange@mail.beehiiv.com"]
+    action: move
+    folder: Newsletters
+
+  - name: "Schwab Market Update"
+    match:
+      sender_contains: ["donotreply@email.schwab.com"]
+    action: move
+    folder: Newsletters
+
+  - name: "Reuters Newsletter"
+    match:
+      sender_contains: ["@go.reuters.com"]
+    action: move
+    folder: Newsletters
+
+  - name: "Quiver Quantitative"
+    match:
+      sender_contains: ["@quiverquant.com"]
+    action: move
+    folder: Newsletters
+
+  - name: "Ollama Newsletter"
+    match:
+      sender_contains: ["hello@ollama.com"]
+    action: move
+    folder: Newsletters
+
+  - name: "Tailscale Newsletter"
+    match:
+      sender_contains: ["hello@tailscale.com"]
+    action: move
+    folder: Newsletters
+
+  # --- Notifications/ignore rules ---
+
+  - name: "NFHS Network"
+    match:
+      sender_contains: ["@stream.nfhsnetwork.com"]
+    action: ignore
+
+  - name: "GameChanger"
+    match:
+      sender_contains: ["gamechanger"]
+    action: ignore
+
+  - name: "Tri-Cities United Soccer"
+    match:
+      sender_contains: ["@tcu.playmetrics.com"]
+    action: ignore
+
+  - name: "ClearanceJobs"
+    match:
+      sender_contains: ["@clearancejobs.com"]
+    action: move
+    folder: Career
+
+  - name: "TryHackMe"
+    match:
+      sender_contains: ["@tryhackme.com"]
+    action: ignore
+
+  - name: "PlugShare"
+    match:
+      sender_contains: ["plugshare"]
+    action: ignore
+
+  - name: "Apple Store Orders"
+    match:
+      sender_contains: ["@orders.apple.com"]
+    action: move
+    folder: Orders
+
+  - name: "Sneds Tour Golf"
+    match:
+      sender_contains: ["@bluegolf.us"]
+    action: ignore
+
+  - name: "Littlebird AI"
+    match:
+      sender_contains: ["@littlebird.ai"]
+    action: ignore
+
+  - name: "UnitedHealthcare Marketing"
+    match:
+      sender_contains: ["@yourhealth-wellnessteam.com"]
+    action: move
+    folder: Marketing

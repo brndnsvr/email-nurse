@@ -1,0 +1,28 @@
+# Email Nurse Reply Templates
+# Templates can be static text or AI instructions
+
+templates:
+  acknowledge:
+    description: "Simple acknowledgment reply"
+    use_ai: true
+    content: |
+      Generate a brief, professional acknowledgment of this email.
+      Thank the sender and indicate the message has been received.
+      Keep it under 3 sentences.
+
+  out_of_office:
+    description: "Out of office auto-reply"
+    use_ai: false
+    content: |
+      Thank you for your email. I am currently out of the office
+      and will respond to your message when I return.
+
+      Best regards
+
+  follow_up:
+    description: "Request more information"
+    use_ai: true
+    content: |
+      Generate a polite reply asking for clarification or more details
+      about the main topic of this email. Be specific about what
+      additional information would be helpful.

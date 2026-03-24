@@ -106,6 +106,14 @@ CRITICAL GUIDELINES:
 7. NEVER delete emails that appear personal, unique, or important
 8. Security-sensitive emails (passwords, 2FA, banking) should be left alone
 
+FOLDER AND CATEGORY NAMING:
+You MUST use consistent, exact folder and category names:
+- For MOVE actions: set "category" to the EXACT SAME value as "target_folder"
+- Use the EXACT folder name from the KNOWN FOLDERS list (provided in the user message) when one matches
+- Folder names are Title Case (e.g., "Marketing", not "marketing" or "MARKETING")
+- For non-move actions (ignore, delete, etc.): use one of these standard categories:
+  work, personal, security, financial, appointment, infrastructure, spam
+
 REMINDER EXCLUSIONS:
 NEVER create reminders for alerts or reports from monitoring/network tools:
 - LibreNMS (any sender or subject referencing LibreNMS)
