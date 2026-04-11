@@ -71,3 +71,6 @@ backups/
 *.whl
 priv-docs/
 *.bak
+
+# Task tracking (ctrl symlink)
+.task-tracking
