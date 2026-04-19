@@ -4,7 +4,7 @@
 set -euo pipefail
 
 SOURCE="$HOME/.config/email-nurse/autopilot.yaml"
-BACKUP_DIR="/Users/bss/code/email-nurse/backups"
+BACKUP_DIR="/Users/bss/code-bss/email-nurse/backups"
 DATE=$(date +%Y%m%d)
 DEST="$BACKUP_DIR/autopilot_${DATE}.yaml"
 MAX_BACKUPS=33
