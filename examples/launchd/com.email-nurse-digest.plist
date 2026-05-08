@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Daily digest email at 21:00 (9 PM).
+
+  Replace HOME_DIR with your absolute home directory before installing.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.email-nurse-digest</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>HOME_DIR/.local/bin/email-nurse-digest.sh</string>
+    </array>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>21</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>HOME_DIR/Library/Logs/email-nurse-digest.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>HOME_DIR/Library/Logs/email-nurse-digest.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+</dict>
+</plist>

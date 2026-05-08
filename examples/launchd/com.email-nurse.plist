@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Scheduled autopilot run.
+
+  Replace HOME_DIR with your absolute home directory (launchd does not
+  expand $HOME in plists). Install path is the default produced by
+  scripts/install.sh.
+
+  Install:
+    cp examples/launchd/com.email-nurse.plist ~/Library/LaunchAgents/
+    sed -i '' "s|HOME_DIR|$HOME|g" ~/Library/LaunchAgents/com.email-nurse.plist
+    launchctl load ~/Library/LaunchAgents/com.email-nurse.plist
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.email-nurse</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>HOME_DIR/.local/bin/email-nurse-autopilot.sh</string>
+    </array>
+
+    <!-- Run every 5 minutes -->
+    <key>StartInterval</key>
+    <integer>300</integer>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>HOME_DIR/Library/Logs/email-nurse.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>HOME_DIR/Library/Logs/email-nurse-error.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+</dict>
+</plist>

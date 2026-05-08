@@ -26,7 +26,7 @@
 **Status:** Rare
 **Impact:** Low - single run skipped, recovers next cycle
 **Error:** `AppleScript timed out after 120s`
-**Root Cause:** Work Inbox sometimes has 100+ messages causing slow AppleScript
+**Root Cause:** Large inboxes (100+ messages) make AppleScript fetches slow
 **Workaround:** Consider batch fetching or increasing timeout for specific accounts
 
 ---
@@ -43,17 +43,4 @@
 
 ## Priority 4: Enhancement Opportunities
 
-### ENH-001: Inconsistent Work support routing (FIXED)
-**Status:** Fixed 2026-02-02
-**Description:** Same type of Work emails routed to different folders
-**Fix:** Added catch-all quick rule for support@work.com
-
-### ENH-002: monitoring SP-MONITOR2 missing rule (FIXED)
-**Status:** Fixed 2026-02-02
-**Description:** monitoring emails from alternate server not caught by rule
-**Fix:** Added SP-MONITOR2.example.com to sender_contains
-
-### ENH-003: monitoring reports vs alerts inconsistency (FIXED)
-**Status:** Fixed 2026-02-02
-**Description:** Reports went to Notifications, alerts to monitoring
-**Fix:** Added quick rule for reports@example.logicmonitor.com
+_(no open enhancement items)_

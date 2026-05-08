@@ -62,6 +62,9 @@ config/autopilot.yaml
 # Production deployment configs (local backup, not synced to remote)
 deploy/
 
+# Local production configs (personal/host-specific, never tracked)
+prod-configs/
+
 # Config backups (local only)
 backup/
 backups/

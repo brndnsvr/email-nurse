@@ -913,7 +913,7 @@ Email Nurse uses per-account logging with automatic rotation:
 ~/Library/Logs/
 ├── email-nurse-error.log      # All errors (from all accounts)
 ├── email-nurse-iCloud.log     # Activity for iCloud account
-├── email-nurse-Work.log    # Activity for Work account
+├── email-nurse-Work.log       # Activity for a second account
 └── email-nurse-{account}.log  # One log per account
 ```
 

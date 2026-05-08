@@ -636,11 +636,11 @@ cat /path/to/email-nurse/config/templates.yaml.example
 ### Source Code
 
 Key modules to understand:
-- `HOME_DIR/code/email-nurse/src/email_nurse/rules/conditions.py` - Condition types
-- `HOME_DIR/code/email-nurse/src/email_nurse/rules/engine.py` - Rule processing
-- `HOME_DIR/code/email-nurse/src/email_nurse/ai/base.py` - AI interface
-- `HOME_DIR/code/email-nurse/src/email_nurse/templates/manager.py` - Template management
-- `HOME_DIR/code/email-nurse/src/email_nurse/config.py` - Configuration
+- `src/email_nurse/rules/conditions.py` - Condition types
+- `src/email_nurse/rules/engine.py` - Rule processing
+- `src/email_nurse/ai/base.py` - AI interface
+- `src/email_nurse/templates/manager.py` - Template management
+- `src/email_nurse/config.py` - Configuration
 
 ### Testing
 

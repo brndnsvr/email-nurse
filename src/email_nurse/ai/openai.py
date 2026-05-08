@@ -56,12 +56,10 @@ Guidelines:
 6. For CREATE_REMINDER actions: include reminder_name and optionally reminder_due (ISO 8601)
 
 REMINDER EXCLUSIONS:
-NEVER create reminders for alerts or reports from monitoring/network tools:
-- monitoring (any sender or subject referencing monitoring)
-- monitoring (any sender or subject referencing monitoring)
-- monitoring (any sender or subject referencing monitoring)
-- monitoring (any sender or subject referencing monitoring or monitoring)
-These are automated infrastructure alerts — ignore or handle with other actions only.
+NEVER create reminders for automated alerts or reports from monitoring,
+observability, or infrastructure tools (e.g. uptime monitors, network
+management systems, log collectors). These are noise — ignore or handle
+with other actions only.
 
 Respond with JSON only:
 {

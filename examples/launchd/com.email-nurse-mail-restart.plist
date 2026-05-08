@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Mail.app restart helper. Wakes daily at 04:00 but only restarts Mail
+  every N days (logic lives in scripts/mail-restart.sh).
+
+  Replace HOME_DIR with your absolute home directory before installing.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.email-nurse-mail-restart</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>HOME_DIR/.local/bin/email-nurse-mail-restart.sh</string>
+    </array>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>4</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>HOME_DIR/Library/Logs/email-nurse-mail-restart.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>HOME_DIR/Library/Logs/email-nurse-mail-restart.log</string>
+</dict>
+</plist>
